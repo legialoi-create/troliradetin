@@ -1,0 +1,6 @@
+{
+  "name": "Trợ Lí Ra Đề C++",
+  "description": "Trợ lí tạo đề thi C++, mã nguồn mẫu và đóng gói bộ 20 test chuẩn Themis (.inp, .out) dạng file ZIP theo lộ trình cấu trúc rẽ nhánh, lặp, hàm, mảng, chuỗi và cấu trúc dữ liệu.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
