@@ -38,6 +38,7 @@ export interface TestCase {
   validationMessage?: string;
   executionTimeMs?: number;
   executionStatus?: 'success' | 'timeout' | 'runtime_error';
+  errorMessage?: string;
 }
 
 export interface SubtaskInfo {
@@ -118,6 +119,9 @@ export interface ProblemData {
   executedByCpp?: boolean;
   cppExecutionTimeMs?: number;
   cppCompileError?: string;
+  cppSampleMatched?: boolean;
+  cppFailedTestCount?: number;
+  cppExecutionDetails?: string;
 }
 
 export interface GenerationRequest {

@@ -69,6 +69,7 @@ export default function App() {
   const [isDownloading, setIsDownloading] = useState(false);
   const [isRegeneratingTests, setIsRegeneratingTests] = useState(false);
   const [isSyncingWithCpp, setIsSyncingWithCpp] = useState(false);
+  const [isAutoRepairingCpp, setIsAutoRepairingCpp] = useState(false);
   const [cppSyncSuccessMsg, setCppSyncSuccessMsg] = useState<string | null>(null);
 
   // Safe localStorage helper to protect against QuotaExceededError
@@ -249,6 +250,32 @@ export default function App() {
     }, 'Tải gói ZIP 20 test Themis');
   };
 
+  // AI Tự động sửa lỗi giải thuật C++ & Chạy lại test
+  const handleAutoRepairCpp = () => {
+    requireAuth(async () => {
+      try {
+        setIsAutoRepairingCpp(true);
+        setCppSyncSuccessMsg(null);
+        const res = await fetch('/api/auto-repair-cpp-solution', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ problem: currentProblem }),
+        });
+        const data = await safeParseJsonResponse(res);
+        if (!res.ok || !data.success) {
+          throw new Error(data.error || 'AI chưa thể tự động sửa mã nguồn lần này.');
+        }
+        handleUpdateProblem(data.problem);
+        setCppSyncSuccessMsg(data.message || 'AI đã sửa và tối ưu mã nguồn C++ thành công!');
+        setTimeout(() => setCppSyncSuccessMsg(null), 8000);
+      } catch (err: any) {
+        alert('Lỗi tự động sửa mã nguồn: ' + err.message);
+      } finally {
+        setIsAutoRepairingCpp(false);
+      }
+    }, 'AI Tự Động Sửa Lỗi Code C++');
+  };
+
   const handleResetToSample = () => {
     setCurrentProblem(SAMPLE_PROBLEM);
     setSelectedTopic('branching');
@@ -395,6 +422,8 @@ export default function App() {
               problem={currentProblem}
               onSyncWithCpp={handleSyncWithCpp}
               isSyncingWithCpp={isSyncingWithCpp}
+              onAutoRepairCpp={handleAutoRepairCpp}
+              isAutoRepairingCpp={isAutoRepairingCpp}
             />
           )}
           {activeTab === 'tests' && (
@@ -405,6 +434,8 @@ export default function App() {
               isRegenerating={isRegeneratingTests}
               onSyncWithCpp={handleSyncWithCpp}
               isSyncingWithCpp={isSyncingWithCpp}
+              onAutoRepairCpp={handleAutoRepairCpp}
+              isAutoRepairingCpp={isAutoRepairingCpp}
             />
           )}
           {activeTab === 'zip' && (

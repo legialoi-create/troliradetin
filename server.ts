@@ -2,6 +2,7 @@ import express from "express";
 import path from "path";
 import { GoogleGenAI, Type } from "@google/genai";
 import dotenv from "dotenv";
+import { jsonrepair } from "jsonrepair";
 import { PREBUILT_PROBLEMS } from "./src/data/prebuiltProblems";
 import { enrichAndEnforceSubtaskCompliance, validateProblemTestCases } from "./src/utils/testValidator";
 import { executeCppSolution } from "./src/server/cppRunner";
@@ -30,11 +31,11 @@ app.use((req, _res, next) => {
   next();
 });
 
-// Candidate models for automatic fallback when one experiences 503 high demand
+// Candidate models for automatic fallback when one experiences 503 high demand or token limits
 const CANDIDATE_MODELS = [
-  "gemini-3.1-flash-lite",
   "gemini-3.8-flash",
   "gemini-flash-latest",
+  "gemini-3.1-flash-lite",
 ];
 
 // Lazy initialize Gemini client
@@ -55,29 +56,95 @@ function getGeminiClient(): GoogleGenAI {
   });
 }
 
-// Resilient API runner that handles 503 (high demand) and 429 with retries and model fallback
-async function executeGeminiWithRetry(
+/**
+ * Robust JSON parser that handles markdown code fences, unescaped characters,
+ * and truncated/unterminated JSON strings from AI generation.
+ */
+export function safeParseOrRepairJson<T = any>(rawText: string): T {
+  if (!rawText || !rawText.trim()) {
+    throw new Error("Phản hồi từ AI bị rỗng.");
+  }
+
+  let cleaned = rawText.trim();
+  // Strip markdown code fences if model wrapped the JSON in ```json ... ```
+  if (cleaned.startsWith("```")) {
+    cleaned = cleaned.replace(/^```(?:json)?\s*/i, "").replace(/\s*```$/, "").trim();
+  }
+
+  // Strategy 1: Direct JSON parse
+  try {
+    return JSON.parse(cleaned) as T;
+  } catch (err1: any) {
+    // Strategy 2: jsonrepair (fixes unterminated strings, unescaped quotes/newlines, trailing commas, missing closing brackets)
+    try {
+      const repaired = jsonrepair(cleaned);
+      return JSON.parse(repaired) as T;
+    } catch (err2: any) {
+      // Strategy 3: Find outermost object or array boundary and repair
+      try {
+        const firstBrace = cleaned.indexOf("{");
+        const firstBracket = cleaned.indexOf("[");
+        let startIdx = -1;
+        if (firstBrace !== -1 && (firstBracket === -1 || firstBrace < firstBracket)) {
+          startIdx = firstBrace;
+        } else if (firstBracket !== -1) {
+          startIdx = firstBracket;
+        }
+
+        if (startIdx !== -1) {
+          const slice = cleaned.slice(startIdx);
+          const repairedSlice = jsonrepair(slice);
+          return JSON.parse(repairedSlice) as T;
+        }
+      } catch (err3: any) {
+        // Strategy 4: Handle unclosed quotes at end of truncated string then repair
+        try {
+          let patched = cleaned;
+          const quotes = (patched.match(/(?<!\\)"/g) || []).length;
+          if (quotes % 2 !== 0) {
+            patched += '"';
+          }
+          const repairedPatched = jsonrepair(patched);
+          return JSON.parse(repairedPatched) as T;
+        } catch (err4: any) {
+          // All strategies exhausted
+        }
+      }
+
+      console.error("[JSON Parser] All JSON parsing & repair attempts failed. Raw snippet:", cleaned.slice(0, 300));
+      throw new Error(`SyntaxError: Không thể phân tích JSON từ AI: ${err1.message}`);
+    }
+  }
+}
+
+// Resilient API runner that handles 503 (high demand), 429, and JSON parsing errors with retries and model fallback
+async function executeGeminiJsonWithRetry<T = any>(
   prompt: string,
   config: any,
   maxRetriesPerModel = 2
-): Promise<{ text: string; modelUsed: string }> {
+): Promise<{ data: T; modelUsed: string; rawText: string }> {
   const ai = getGeminiClient();
   let lastError: any = null;
 
   for (const model of CANDIDATE_MODELS) {
     for (let attempt = 1; attempt <= maxRetriesPerModel; attempt++) {
       try {
-        console.log(`[Gemini] Attempting generation with model "${model}" (trial ${attempt})...`);
+        console.log(`[Gemini] Generating with model "${model}" (trial ${attempt}/${maxRetriesPerModel})...`);
         const response = await ai.models.generateContent({
           model,
           contents: prompt,
           config,
         });
 
-        if (response?.text) {
-          console.log(`[Gemini] Successfully generated content using model "${model}"`);
-          return { text: response.text, modelUsed: model };
+        const rawText = response?.text || "";
+        if (!rawText) {
+          throw new Error("Phản hồi từ AI bị rỗng.");
         }
+
+        // Validate and parse JSON immediately inside the retry loop
+        const data = safeParseOrRepairJson<T>(rawText);
+        console.log(`[Gemini] Successfully generated and parsed valid JSON with "${model}"`);
+        return { data, modelUsed: model, rawText };
       } catch (err: any) {
         lastError = err;
         const msg = err?.message || String(err);
@@ -87,22 +154,20 @@ async function executeGeminiWithRetry(
           msg.includes("high demand") ||
           msg.includes("429") ||
           msg.includes("RESOURCE_EXHAUSTED") ||
-          msg.includes("overloaded");
+          msg.includes("overloaded") ||
+          msg.includes("SyntaxError") ||
+          msg.includes("Unterminated string") ||
+          msg.includes("JSON");
 
         console.warn(`[Gemini] Model "${model}" trial ${attempt} failed: ${msg}`);
 
-        if (isTransient) {
-          if (attempt < maxRetriesPerModel) {
-            // Short backoff before retry on same model
-            await new Promise((r) => setTimeout(r, 1200 * attempt));
-            continue;
-          }
-          // If all trials on this model failed with 503/429, fall through to next model
-          console.warn(`[Gemini] Switching to alternate model due to high demand...`);
-          break;
+        if (attempt < maxRetriesPerModel && isTransient) {
+          // Short backoff before retry on same model
+          await new Promise((r) => setTimeout(r, 1000 * attempt));
+          continue;
         }
-
-        // For non-transient errors, break and try next model
+        // If all trials on this model failed or error is non-recoverable on this model, switch to next model
+        console.warn(`[Gemini] Switching to alternate candidate model...`);
         break;
       }
     }
@@ -204,15 +269,20 @@ QUY TẮC BẮT BUỘC VỀ TÊN BÀI, MÃ BÀI, INPUT, OUTPUT VIỆT HOÁ NGẮ
      - 20% số test có $n \\le 100$.
      - 30% số test tiếp theo có $100 < n \\le 1000$.
      - 50% số test còn lại có $1000 < n \\le 10^5$.
-6. **Mã nguồn lời giải (solutionCpp)**:
-   - Viết bằng C++ chuẩn (sử dụng #include <iostream>, #include <vector>, v.v.).
+6. **Mã nguồn lời giải (solutionCpp) & Kiểu biến (Data Types) CHUẨN XÁC 100%**:
+   - Viết bằng C++ chuẩn (sử dụng #include <iostream>, #include <vector>, #include <string>, #include <iomanip>, v.v.).
+   - **ĐỒNG BỘ TUYỆT ĐỐI KIỂU BIẾN VỚI RÀNG BUỘC ĐỀ BÀI**:
+     * Nếu giá trị của biến, tổng, tích hoặc kết quả có thể vượt quá $2 \\cdot 10^9$ (ví dụ: $n \\le 10^9$ tính tổng, $n \\le 10^{12}$, $n \\le 10^{18}$, tổng mảng $10^5 \\times 10^9 = 10^{14}$), BẮT BUỘC dùng kiểu 'long long' (hoặc 'unsigned long long') trong C++, kèm ép kiểu khi nhân '(long long)a * b' để TRÁNH TRÀN SỐ NGUYÊN (Integer Overflow).
+     * Với số thực: dùng 'double' hoặc 'long double', in kết quả kèm 'fixed << setprecision(k)' đúng số chữ số thập phân đề yêu cầu.
+     * Với xâu ký tự: dùng 'string', xử lý đọc cả dòng 'getline(cin, s)' nếu chuỗi có khoảng trắng.
+     * Tên các biến khai báo trong code C++ phải khớp với tên biến được nhắc đến trong Đề bài và Ràng buộc ($n$, $k$, $a, b$, $A_i$,...).
    - Comment tiếng Việt giải thích rõ ràng từng khối lệnh.
    - Có 2 dòng comment đọc ghi file cho hệ thống chấm Themis sử dụng đúng mã bài <= 6 ký tự:
      // freopen("<MABAI>.inp", "r", stdin);
      // freopen("<MABAI>.out", "w", stdout);
-   - Mã nguồn phải tối ưu, đúng 100% không có lỗi biên dịch.
+   - Mã nguồn phải chuẩn, tối ưu, biên dịch trực tiếp không có lỗi bằng g++ (C++17).
 7. **Bộ đúng ${testCount} test cases (test01 đến test${testCount < 10 ? "0" + testCount : testCount})**:
-   - Đầu ra output của mỗi test case phải CHÍNH XÁC TUYỆT ĐỐI theo đúng thuật toán của đề bài và mã nguồn C++.
+   - Hệ thống sẽ biên dịch và chạy trực tiếp file C++ này với stdin/stdout để sinh output thực tế cho từng test case.
    - KIỂM TRA ĐÚNG RÀNG BUỘC CÁC SUBTASK:
      * test01: BẮT BUỘC trùng khớp 100% từng ký tự với sampleInput và sampleOutput trong đề bài (isSample = true).
      * Phân chia các test case khớp đúng tỷ lệ % của từng Subtask trong đề bài.
@@ -293,8 +363,8 @@ Hãy trả về định dạng JSON khớp với schema quy định.`;
   };
 
   try {
-    const { text, modelUsed } = await executeGeminiWithRetry(prompt, schemaConfig);
-    let result = JSON.parse(text || "{}");
+    const { data: rawResult, modelUsed } = await executeGeminiJsonWithRetry(prompt, schemaConfig);
+    let result = (rawResult || {}) as any;
 
     // Format and sanitize
     result.id = `prob-${Date.now()}`;
@@ -429,8 +499,8 @@ Bao gồm từ test01 đến test${count < 10 ? "0" + count : count}.`;
   };
 
   try {
-    const { text } = await executeGeminiWithRetry(prompt, schemaConfig);
-    const tests = JSON.parse(text || "[]");
+    const { data: rawTests } = await executeGeminiJsonWithRetry(prompt, schemaConfig);
+    const tests = Array.isArray(rawTests) ? rawTests : (rawTests as any)?.testCases || [];
 
     const formattedTests = tests.map((tc: any, idx: number) => {
       const num = idx + 1;
@@ -600,13 +670,14 @@ YÊU CẦU GỢI Ý ĐIỀU CHỈNH TỪ GIÁO VIÊN CHO MỤC "${sectionTitle |
 NHIỆM VỤ BẮT BUỘC:
 1. Tiếp thu chính xác và trọn vẹn gợi ý của giáo viên để viết lại mục "${sectionTitle || sectionKey}".
 2. Đồng bộ hóa các mục liên quan nếu việc sửa đổi làm ảnh hưởng (ví dụ: sửa dữ liệu vào thì phải sửa định dạng vào, ví dụ mẫu, lời giải C++; sửa ràng buộc thì phải cập nhật phân bổ Subtask và thuật toán).
-3. LỜI GIẢI C++ (solutionCpp):
-   - Phải hoạt động chính xác 100% với đề bài sau khi sửa.
+3. LỜI GIẢI C++ (solutionCpp) & KIỂU BIẾN CHUẨN XÁC 100%:
+   - Phải hoạt động chính xác 100% với đề bài sau khi sửa, biên dịch trực tiếp không lỗi bằng g++ (C++17).
+   - ĐỒNG BỘ TUYỆT ĐỐI KIỂU BIẾN: Nếu giá trị/tổng/tích $> 2 \\cdot 10^9$ (ví dụ: $n \\le 10^{12}, 10^{18}$), BẮT BUỘC dùng 'long long' kèm ép kiểu khi nhân '(long long)a * b' để TRÁNH TRÀN SỐ NGUYÊN (Integer Overflow). Dùng 'double' cho số thực, 'string' cho xâu ký tự. Tên biến phải khớp với Đề bài.
    - Có comment tiếng Việt sư phạm và 2 dòng freopen("${problem.problemCode}.inp", "r", stdin); freopen("${problem.problemCode}.out", "w", stdout);.
 4. TẠO LẠI BỘ ĐÚNG ${testCount} TEST CASES MỚI PHÙ HỢP SAU KHI SỬA (test01 đến test${testCount < 10 ? "0" + testCount : testCount}):
    - test01: BẮT BUỘC trùng khớp 100% từng ký tự với sampleInput và sampleOutput mới (isSample = true).
    - Phân chia test theo đúng tỷ lệ các Subtask trong ràng buộc mới (ví dụ 20% test nhỏ, 30% test vừa, 50% test lớn).
-   - Đầu ra output của mỗi test case phải CHÍNH XÁC TUYỆT ĐỐI theo thuật toán và mã nguồn C++ mới.
+   - Dữ liệu input phải tuân thủ nghiêm ngặt ràng buộc của Subtask. Hệ thống sẽ biên dịch và chạy trực tiếp file C++ này để sinh output chính xác 100%.
 5. QUY TẮC ĐỊNH DẠNG VĂN BẢN VÀ CÔNG THỨC TOÁN (BẮT BUỘC):
    - TUYỆT ĐỐI KHÔNG dùng dấu ** ở đầu hoặc cuối tiêu đề, câu văn hoặc đoạn văn.
    - TẤT CẢ các công thức toán, biến số ($n$, $a, b$, $1 \\le n \\le 10^5$, $O(N)$) BẮT BUỘC kẹp giữa 2 dấu $ theo cú pháp LaTeX chuẩn.
@@ -682,8 +753,8 @@ Hãy trả về định dạng JSON khớp với schema quy định.`;
   };
 
   try {
-    const { text, modelUsed } = await executeGeminiWithRetry(prompt, schemaConfig);
-    let result = JSON.parse(text || "{}");
+    const { data: rawResult, modelUsed } = await executeGeminiJsonWithRetry(prompt, schemaConfig);
+    let result = (rawResult || {}) as any;
 
     // Preserve metadata
     result.id = problem.id || `prob-${Date.now()}`;
@@ -711,6 +782,32 @@ Hãy trả về định dạng JSON khớp với schema quy định.`;
           note: tc.note || (idx === 0 ? "Test ví dụ đề bài" : `Test trường hợp ${num}`),
         };
       });
+    }
+
+    // BIÊN DỊCH VÀ CHẠY CODE CHUẨN C++ ĐỂ SINH OUTPUT CHÍNH XÁC 100%
+    if (result.solutionCpp && Array.isArray(result.testCases) && result.testCases.length > 0) {
+      try {
+        console.log(`[C++ Engine] Compiling & executing C++ solution for refined problem ${result.problemCode}...`);
+        const execRes = await executeCppSolution(
+          result.solutionCpp,
+          result.testCases,
+          result.sampleInput
+        );
+        if (execRes.success) {
+          result.testCases = execRes.testCases;
+          if (execRes.sampleOutput) {
+            result.sampleOutput = execRes.sampleOutput;
+          }
+          result.executedByCpp = true;
+          result.cppExecutionTimeMs = execRes.totalTimeMs;
+          console.log(`[C++ Engine] Successfully executed all ${result.testCases.length} tests in ${execRes.totalTimeMs}ms (100% accurate output)`);
+        } else {
+          console.warn('[C++ Engine] Compilation warning/error:', execRes.compileError);
+          result.cppCompileError = execRes.compileError;
+        }
+      } catch (runErr) {
+        console.error('[C++ Engine] Execution error:', runErr);
+      }
     }
 
     // AUTOMATED VALIDATION & SUBTASK ENFORCEMENT

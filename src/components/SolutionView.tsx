@@ -9,6 +9,7 @@ import {
   Cpu,
   Layers,
   FileCode,
+  Sparkles,
 } from 'lucide-react';
 import { ProblemData } from '../types';
 
@@ -16,12 +17,16 @@ interface SolutionViewProps {
   problem: ProblemData;
   onSyncWithCpp?: () => void | Promise<void>;
   isSyncingWithCpp?: boolean;
+  onAutoRepairCpp?: () => void | Promise<void>;
+  isAutoRepairingCpp?: boolean;
 }
 
 export const SolutionView: React.FC<SolutionViewProps> = ({
   problem,
   onSyncWithCpp,
   isSyncingWithCpp = false,
+  onAutoRepairCpp,
+  isAutoRepairingCpp = false,
 }) => {
   const [copied, setCopied] = useState(false);
   const [useFreopen, setUseFreopen] = useState(false);
@@ -89,11 +94,24 @@ export const SolutionView: React.FC<SolutionViewProps> = ({
 
           <div className="flex items-center space-x-2">
             {/* Run C++ Button */}
+            {onAutoRepairCpp && (
+              <button
+                id="btn-auto-repair-cpp-from-solution"
+                onClick={onAutoRepairCpp}
+                disabled={isAutoRepairingCpp || isSyncingWithCpp}
+                className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-bold text-white bg-amber-600 hover:bg-amber-500 rounded-lg transition-colors border border-amber-500 disabled:opacity-50"
+                title="AI phân tích và sửa lỗi tràn số nguyên (long long), lỗi mảng hoặc tối ưu giải thuật"
+              >
+                <Sparkles className={`w-3.5 h-3.5 ${isAutoRepairingCpp ? 'animate-spin' : ''}`} />
+                <span>{isAutoRepairingCpp ? 'AI Đang Sửa Code...' : 'AI Sửa Lỗi & Tối Ưu Code'}</span>
+              </button>
+            )}
+
             {onSyncWithCpp && (
               <button
                 id="btn-sync-cpp-from-solution"
                 onClick={onSyncWithCpp}
-                disabled={isSyncingWithCpp}
+                disabled={isSyncingWithCpp || isAutoRepairingCpp}
                 className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-bold text-white bg-emerald-600 hover:bg-emerald-500 rounded-lg transition-colors border border-emerald-500 disabled:opacity-50"
                 title="Biên dịch code C++ này và chạy lại toàn bộ test cases để cập nhật 100% Output chính xác"
               >

@@ -30,6 +30,8 @@ interface TestCasesViewProps {
   isRegenerating: boolean;
   onSyncWithCpp?: () => void | Promise<void>;
   isSyncingWithCpp?: boolean;
+  onAutoRepairCpp?: () => void | Promise<void>;
+  isAutoRepairingCpp?: boolean;
 }
 
 export const TestCasesView: React.FC<TestCasesViewProps> = ({
@@ -39,6 +41,8 @@ export const TestCasesView: React.FC<TestCasesViewProps> = ({
   isRegenerating,
   onSyncWithCpp,
   isSyncingWithCpp = false,
+  onAutoRepairCpp,
+  isAutoRepairingCpp = false,
 }) => {
   const tests = problem.testCases || [];
   const [selectedTestId, setSelectedTestId] = useState<number>(tests[0]?.id || 1);
@@ -162,11 +166,24 @@ export const TestCasesView: React.FC<TestCasesViewProps> = ({
         </div>
 
         <div className="flex items-center gap-2 flex-wrap">
+          {onAutoRepairCpp && (
+            <button
+              id="btn-auto-repair-cpp"
+              onClick={onAutoRepairCpp}
+              disabled={isAutoRepairingCpp || isSyncingWithCpp || !problem.solutionCpp}
+              className="inline-flex items-center gap-1.5 px-3.5 py-2 text-xs font-bold text-white bg-amber-600 hover:bg-amber-700 active:bg-amber-800 rounded-lg transition-colors shadow-sm disabled:opacity-50"
+              title="Phân tích lỗi giải thuật, sửa lỗi tràn số nguyên (long long), lỗi mảng và tự động biên dịch lại 20 test"
+            >
+              <Sparkles className={`w-4 h-4 ${isAutoRepairingCpp ? 'animate-spin' : ''}`} />
+              <span>{isAutoRepairingCpp ? 'AI Đang Sửa Code...' : 'AI Sửa Lỗi & Tối Ưu Code C++'}</span>
+            </button>
+          )}
+
           {onSyncWithCpp && (
             <button
               id="btn-sync-cpp-tests"
               onClick={onSyncWithCpp}
-              disabled={isSyncingWithCpp || !problem.solutionCpp}
+              disabled={isSyncingWithCpp || isAutoRepairingCpp || !problem.solutionCpp}
               className="inline-flex items-center gap-1.5 px-3.5 py-2 text-xs font-bold text-white bg-emerald-600 hover:bg-emerald-700 active:bg-emerald-800 rounded-lg transition-colors shadow-sm disabled:opacity-50"
               title="Biên dịch mã nguồn C++ chuẩn và nạp lần lượt các bộ test vào để sinh Output chính xác tuyệt đối 100%"
             >
@@ -186,7 +203,7 @@ export const TestCasesView: React.FC<TestCasesViewProps> = ({
           <button
             id="btn-regenerate-tests"
             onClick={onRegenerateTests}
-            disabled={isRegenerating || isSyncingWithCpp}
+            disabled={isRegenerating || isSyncingWithCpp || isAutoRepairingCpp}
             className="inline-flex items-center gap-1.5 px-3 py-2 text-xs font-semibold text-indigo-700 bg-indigo-50 hover:bg-indigo-100 border border-indigo-200 rounded-lg transition-colors disabled:opacity-50"
           >
             <RotateCcw className={`w-4 h-4 ${isRegenerating ? 'animate-spin' : ''}`} />
@@ -194,6 +211,33 @@ export const TestCasesView: React.FC<TestCasesViewProps> = ({
           </button>
         </div>
       </div>
+
+      {/* Warning Banner if C++ had sample mismatch or test failures */}
+      {(problem.cppSampleMatched === false || (problem.cppFailedTestCount && problem.cppFailedTestCount > 0)) && (
+        <div className="bg-amber-50 border border-amber-300 rounded-2xl p-4 text-amber-900 shadow-sm flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3">
+          <div className="flex items-start gap-3">
+            <AlertCircle className="w-5 h-5 text-amber-600 shrink-0 mt-0.5" />
+            <div>
+              <div className="text-xs font-bold text-amber-900 uppercase tracking-wider">
+                Phát hiện vấn đề giải thuật trong mã nguồn C++
+              </div>
+              <div className="text-xs text-amber-800 mt-0.5">
+                {problem.cppExecutionDetails || (problem.cppFailedTestCount ? `Có ${problem.cppFailedTestCount} test case bị lỗi thực thi hoặc quá thời gian (TLE/Tràn số).` : 'Mã nguồn C++ chưa vượt qua test ví dụ của đề bài.')}
+              </div>
+            </div>
+          </div>
+          {onAutoRepairCpp && (
+            <button
+              onClick={onAutoRepairCpp}
+              disabled={isAutoRepairingCpp}
+              className="shrink-0 inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-bold text-white bg-amber-600 hover:bg-amber-700 rounded-lg shadow-xs disabled:opacity-50"
+            >
+              <Sparkles className="w-3.5 h-3.5" />
+              <span>AI Tự Động Sửa Lỗi Ngay</span>
+            </button>
+          )}
+        </div>
+      )}
 
       {/* Subtask & Constraints Verification Panel */}
       <div className="bg-white rounded-2xl border border-slate-200 p-5 shadow-xs space-y-4">
@@ -384,7 +428,19 @@ export const TestCasesView: React.FC<TestCasesViewProps> = ({
                         Max N
                       </span>
                     )}
-                    <CheckCircle2 className="w-3.5 h-3.5 text-emerald-600" />
+                    {test.executionStatus === 'timeout' ? (
+                      <span className="text-[10px] bg-red-100 text-red-700 px-1.5 py-0.2 rounded font-bold font-mono">
+                        TLE
+                      </span>
+                    ) : test.executionStatus === 'runtime_error' ? (
+                      <span className="text-[10px] bg-rose-100 text-rose-700 px-1.5 py-0.2 rounded font-bold font-mono">
+                        RTE
+                      </span>
+                    ) : test.executionStatus === 'success' ? (
+                      <CheckCircle2 className="w-3.5 h-3.5 text-emerald-600" />
+                    ) : (
+                      <CheckCircle2 className="w-3.5 h-3.5 text-slate-400" />
+                    )}
                   </div>
                 </button>
               );
@@ -403,9 +459,26 @@ export const TestCasesView: React.FC<TestCasesViewProps> = ({
                     {currentTest.id < 10 ? '0' + currentTest.id : currentTest.id}
                   </div>
                   <div>
-                    <h3 className="text-sm font-bold text-slate-900 font-mono">
-                      Thư mục: {problem.problemCode}/{currentTest.testName}/
-                    </h3>
+                    <div className="flex items-center gap-2">
+                      <h3 className="text-sm font-bold text-slate-900 font-mono">
+                        Thư mục: {problem.problemCode}/{currentTest.testName}/
+                      </h3>
+                      {currentTest.executionStatus === 'timeout' && (
+                        <span className="text-[11px] font-bold text-red-700 bg-red-50 border border-red-200 px-2 py-0.5 rounded-full">
+                          Quá thời gian (TLE &gt; 3.0s)
+                        </span>
+                      )}
+                      {currentTest.executionStatus === 'runtime_error' && (
+                        <span className="text-[11px] font-bold text-rose-700 bg-rose-50 border border-rose-200 px-2 py-0.5 rounded-full">
+                          Lỗi thực thi (Runtime Error)
+                        </span>
+                      )}
+                      {currentTest.executionStatus === 'success' && (
+                        <span className="text-[11px] font-bold text-emerald-700 bg-emerald-50 border border-emerald-200 px-2 py-0.5 rounded-full flex items-center gap-1">
+                          <Check className="w-3 h-3" /> Chuẩn C++ ({currentTest.executionTimeMs}ms)
+                        </span>
+                      )}
+                    </div>
                     <p className="text-xs text-slate-500">
                       Ghi chú: <strong className="text-slate-700">{currentTest.note || 'Không có ghi chú'}</strong>
                     </p>
