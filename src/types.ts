@@ -36,6 +36,8 @@ export interface TestCase {
   subtaskConstraint?: string; // e.g. "Subtask 1: n <= 100"
   validationStatus?: 'pass' | 'warning' | 'fail';
   validationMessage?: string;
+  executionTimeMs?: number;
+  executionStatus?: 'success' | 'timeout' | 'runtime_error';
 }
 
 export interface SubtaskInfo {
@@ -113,6 +115,9 @@ export interface ProblemData {
   testCases: TestCase[];
   createdAt: number;
   validationReport?: TestValidationReport;
+  executedByCpp?: boolean;
+  cppExecutionTimeMs?: number;
+  cppCompileError?: string;
 }
 
 export interface GenerationRequest {

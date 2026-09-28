@@ -15,6 +15,7 @@ import {
   ShieldCheck,
   SlidersHorizontal,
   Layers,
+  Cpu,
 } from 'lucide-react';
 import { ProblemData, TestCase } from '../types';
 import {
@@ -25,8 +26,10 @@ import {
 interface TestCasesViewProps {
   problem: ProblemData;
   onUpdateTestCases: (tests: TestCase[]) => void;
-  onRegenerateTests: () => Promise<void>;
+  onRegenerateTests: () => void | Promise<void>;
   isRegenerating: boolean;
+  onSyncWithCpp?: () => void | Promise<void>;
+  isSyncingWithCpp?: boolean;
 }
 
 export const TestCasesView: React.FC<TestCasesViewProps> = ({
@@ -34,6 +37,8 @@ export const TestCasesView: React.FC<TestCasesViewProps> = ({
   onUpdateTestCases,
   onRegenerateTests,
   isRegenerating,
+  onSyncWithCpp,
+  isSyncingWithCpp = false,
 }) => {
   const tests = problem.testCases || [];
   const [selectedTestId, setSelectedTestId] = useState<number>(tests[0]?.id || 1);
@@ -142,6 +147,11 @@ export const TestCasesView: React.FC<TestCasesViewProps> = ({
             <span className="text-xs font-bold text-emerald-700 bg-emerald-50 px-2.5 py-0.5 rounded-full border border-emerald-200">
               {validationReport.subtasks.length} Phân đoạn Subtask
             </span>
+            {problem.executedByCpp && (
+              <span className="text-xs font-bold text-teal-800 bg-teal-50 px-2.5 py-0.5 rounded-full border border-teal-300 flex items-center gap-1">
+                <Check className="w-3.5 h-3.5 text-teal-600" /> Output 100% chính xác qua g++ ({problem.cppExecutionTimeMs}ms)
+              </span>
+            )}
           </div>
           <h2 className="text-lg font-bold text-slate-900">
             Cấu trúc bộ test của bài: <span className="text-blue-700 font-mono">{problem.problemCode}</span>
@@ -152,6 +162,19 @@ export const TestCasesView: React.FC<TestCasesViewProps> = ({
         </div>
 
         <div className="flex items-center gap-2 flex-wrap">
+          {onSyncWithCpp && (
+            <button
+              id="btn-sync-cpp-tests"
+              onClick={onSyncWithCpp}
+              disabled={isSyncingWithCpp || !problem.solutionCpp}
+              className="inline-flex items-center gap-1.5 px-3.5 py-2 text-xs font-bold text-white bg-emerald-600 hover:bg-emerald-700 active:bg-emerald-800 rounded-lg transition-colors shadow-sm disabled:opacity-50"
+              title="Biên dịch mã nguồn C++ chuẩn và nạp lần lượt các bộ test vào để sinh Output chính xác tuyệt đối 100%"
+            >
+              <Cpu className={`w-4 h-4 ${isSyncingWithCpp ? 'animate-spin' : ''}`} />
+              <span>{isSyncingWithCpp ? 'Đang chạy C++ (g++)...' : 'Chạy Code C++ Chuẩn (Output 100%)'}</span>
+            </button>
+          )}
+
           <button
             onClick={handleAddTest}
             className="inline-flex items-center gap-1.5 px-3 py-2 text-xs font-semibold text-slate-700 bg-slate-100 hover:bg-slate-200 rounded-lg transition-colors"
@@ -163,7 +186,7 @@ export const TestCasesView: React.FC<TestCasesViewProps> = ({
           <button
             id="btn-regenerate-tests"
             onClick={onRegenerateTests}
-            disabled={isRegenerating}
+            disabled={isRegenerating || isSyncingWithCpp}
             className="inline-flex items-center gap-1.5 px-3 py-2 text-xs font-semibold text-indigo-700 bg-indigo-50 hover:bg-indigo-100 border border-indigo-200 rounded-lg transition-colors disabled:opacity-50"
           >
             <RotateCcw className={`w-4 h-4 ${isRegenerating ? 'animate-spin' : ''}`} />
@@ -188,7 +211,7 @@ export const TestCasesView: React.FC<TestCasesViewProps> = ({
             <div>
               <div className="flex items-center gap-2 flex-wrap">
                 <h3 className="text-base font-bold text-slate-900">
-                  Thẩm Định & Rà Soát Ràng Buộc Subtask
+                  Kiểm Tra & Rà Soát Ràng Buộc Subtask
                 </h3>
                 <span
                   className={`text-xs font-bold px-2.5 py-0.5 rounded-full ${
@@ -200,14 +223,14 @@ export const TestCasesView: React.FC<TestCasesViewProps> = ({
                   {validationReport.isValid ? '✓ 100% ĐẠT CHUẨN ĐỀ BÀI' : '⚠ CẦN RÀ SOÁT'}
                 </span>
                 <span className="text-xs font-semibold text-slate-600 bg-slate-100 px-2.5 py-0.5 rounded-full">
-                  Điểm thẩm định: {validationReport.score}/100
+                  Độ khớp chuẩn: {validationReport.score}/100
                 </span>
               </div>
               <p className="text-xs text-slate-500 mt-1">{validationReport.summary}</p>
             </div>
           </div>
 
-          <div className="flex items-center gap-2 shrink-0">
+          <div className="flex items-center gap-2 shrink-0 flex-wrap">
             <button
               onClick={handleAutoFixSubtasks}
               className="inline-flex items-center gap-1.5 px-3 py-2 text-xs font-semibold text-emerald-800 bg-emerald-50 hover:bg-emerald-100 border border-emerald-200 rounded-lg transition-colors shadow-xs"

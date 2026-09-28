@@ -241,12 +241,15 @@ export const GenerateProblemModal: React.FC<GenerateProblemModalProps> = ({
           {/* 3. Tên bài & Mã bài (Tùy chọn) */}
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
             <div>
-              <label className="block text-xs font-semibold text-slate-700 mb-1">
-                Tên bài toán (Để trống nếu muốn AI tự đặt)
-              </label>
+              <div className="flex items-center justify-between mb-1">
+                <label className="block text-xs font-semibold text-slate-700">
+                  Tên bài toán (Việt hoá ngắn gọn)
+                </label>
+                <span className="text-[10px] text-slate-400">Tùy chọn</span>
+              </div>
               <input
                 type="text"
-                placeholder="VD: Phân loại tam giác, Tính tiền điện..."
+                placeholder="VD: Tam giác, Tính tổng, Số nguyên tố..."
                 value={problemName}
                 onChange={(e) => setProblemName(e.target.value)}
                 disabled={isLoading}
@@ -254,17 +257,34 @@ export const GenerateProblemModal: React.FC<GenerateProblemModalProps> = ({
               />
             </div>
             <div>
-              <label className="block text-xs font-semibold text-slate-700 mb-1">
-                Mã bài / Tên file (.inp & .out)
-              </label>
+              <div className="flex items-center justify-between mb-1">
+                <label className="block text-xs font-semibold text-slate-700">
+                  Mã bài / Tên file (.inp & .out)
+                </label>
+                <span className="text-[10px] text-indigo-600 font-bold bg-indigo-50 px-1.5 py-0.5 rounded">
+                  Tối đa 6 kí tự
+                </span>
+              </div>
               <input
                 type="text"
-                placeholder="VD: TAMGIAC, TIENDIEN, FIBO..."
+                maxLength={6}
+                placeholder="VD: TG, TONG, SNT, MAX2..."
                 value={problemCode}
-                onChange={(e) => setProblemCode(e.target.value.toUpperCase())}
+                onChange={(e) => {
+                  const cleaned = e.target.value
+                    .toUpperCase()
+                    .normalize('NFD')
+                    .replace(/[\u0300-\u036f]/g, '')
+                    .replace(/[^A-Z0-9]/g, '')
+                    .slice(0, 6);
+                  setProblemCode(cleaned);
+                }}
                 disabled={isLoading}
-                className="w-full text-xs font-mono uppercase bg-white border border-slate-200 rounded-lg px-3 py-2 text-slate-800 focus:outline-none focus:ring-2 focus:ring-blue-500"
+                className="w-full text-xs font-mono font-bold uppercase bg-white border border-slate-200 rounded-lg px-3 py-2 text-slate-800 focus:outline-none focus:ring-2 focus:ring-blue-500"
               />
+              <p className="text-[10px] text-slate-500 mt-1">
+                File sinh ra: <span className="font-mono text-blue-600 font-bold">{problemCode || 'BAI'}.inp</span> và <span className="font-mono text-blue-600 font-bold">{problemCode || 'BAI'}.out</span>
+              </p>
             </div>
           </div>
 
@@ -297,7 +317,7 @@ export const GenerateProblemModal: React.FC<GenerateProblemModalProps> = ({
                 <div className="bg-indigo-600 h-full rounded-full animate-pulse w-3/4"></div>
               </div>
               <p className="text-[11px] text-indigo-700">
-                Hệ thống đang thẩm định tính đúng đắn của 20 bộ test để đảm bảo khớp 100% với lời giải C++.
+                Hệ thống đang kiểm tra tính đúng đắn của 20 bộ test để đảm bảo khớp 100% với lời giải C++.
               </p>
             </div>
           )}

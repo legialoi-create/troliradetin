@@ -12,25 +12,25 @@ export const CURRICULUM_TOPICS: CurriculumTopic[] = [
     suggestedProblems: [
       {
         name: 'Phân loại tam giác',
-        code: 'TAMGIAC',
-        brief: 'Cho 3 cạnh a, b, c. Xác định xem có tạo thành tam giác không và là tam giác đều, cân, vuông hay thường.',
+        code: 'TG',
+        brief: 'Cho 3 cạnh a, b, c. Xác định tam giác đều, cân, vuông hay thường.',
         difficulty: 'easy',
       },
       {
         name: 'Tính tiền điện bậc thang',
-        code: 'TIENDIEN',
+        code: 'TDIEN',
         brief: 'Tính hoá đơn tiền điện sinh hoạt theo các bậc thang tiêu thụ điện.',
         difficulty: 'medium',
       },
       {
-        name: 'Năm nhuận và số ngày trong tháng',
-        code: 'SONGAY',
-        brief: 'Nhập vào tháng và năm, xuất ra số ngày chính xác của tháng đó có tính năm nhuận.',
+        name: 'Số ngày trong tháng',
+        code: 'SNGAY',
+        brief: 'Nhập vào tháng và năm, xuất ra số ngày chính xác có tính năm nhuận.',
         difficulty: 'easy',
       },
       {
-        name: 'Tìm số lớn nhất trong 4 số',
-        code: 'MAX4SO',
+        name: 'Tìm số lớn nhất 4 số',
+        code: 'MAX4',
         brief: 'Nhập vào 4 số nguyên a, b, c, d. Tìm và in ra giá trị lớn nhất.',
         difficulty: 'easy',
       },
@@ -48,25 +48,25 @@ export const CURRICULUM_TOPICS: CurriculumTopic[] = [
       {
         name: 'Kiểm tra số nguyên tố',
         code: 'KTSNT',
-        brief: 'Kiểm tra một số nguyên n có phải là số nguyên tố hay không (tối ưu căn bậc hai).',
+        brief: 'Kiểm tra một số nguyên n có phải là số nguyên tố hay không.',
         difficulty: 'easy',
       },
       {
         name: 'Tổng các chữ số của n',
         code: 'TONGCS',
-        brief: 'Tính tổng các chữ số của một số nguyên dương n có thể lên đến 18 chữ số.',
+        brief: 'Tính tổng các chữ số của một số nguyên dương n lên đến 18 chữ số.',
         difficulty: 'easy',
       },
       {
-        name: 'Ước chung lớn nhất & Bội chung nhỏ nhất',
+        name: 'Ước chung lớn nhất',
         code: 'UCLN',
-        brief: 'Tìm ước chung lớn nhất và bội chung nhỏ nhất của hai số nguyên dương a và b.',
+        brief: 'Tìm ước chung lớn nhất và bội chung nhỏ nhất của hai số nguyên dương.',
         difficulty: 'medium',
       },
       {
-        name: 'In tam giác số đối xứng',
+        name: 'Vẽ hình tam giác sao',
         code: 'VEHINH',
-        brief: 'Nhập số nguyên n, in ra tam giác số hoặc hình sao đối xứng theo quy luật.',
+        brief: 'Nhập số nguyên n, in ra tam giác số hoặc hình sao đối xứng.',
         difficulty: 'medium',
       },
     ],
@@ -81,21 +81,21 @@ export const CURRICULUM_TOPICS: CurriculumTopic[] = [
     concepts: ['Khai báo & định nghĩa hàm', 'Tham số giá trị & tham chiếu (&)', 'Hàm trả về giá trị / void', 'Đệ quy cơ bản', 'Hàm đệ quy Fibonacci', 'Hàm đệ quy luỹ thừa'],
     suggestedProblems: [
       {
-        name: 'Hàm tính số Fibonacci thứ n',
+        name: 'Số Fibonacci thứ n',
         code: 'FIBO',
-        brief: 'Viết hàm tính số Fibonacci thứ n sử dụng tư duy hàm và vòng lặp/đệ quy có nhớ.',
+        brief: 'Viết hàm tính số Fibonacci thứ n sử dụng tư duy hàm và quy hoạch động/vòng lặp.',
         difficulty: 'easy',
       },
       {
-        name: 'Đếm số lượng số nguyên tố trong đoạn [a, b]',
+        name: 'Đếm số nguyên tố trong [a, b]',
         code: 'DEMSNT',
-        brief: 'Viết hàm kiemTraSNT(x) và dùng vòng lặp đếm số lượng số nguyên tố trong đoạn [a, b].',
+        brief: 'Viết hàm kiemTraSNT(x) và đếm số lượng số nguyên tố trong đoạn [a, b].',
         difficulty: 'medium',
       },
       {
-        name: 'Hoán vị 2 số & sắp xếp 3 số bằng tham chiếu',
+        name: 'Hoán vị và sắp xếp 3 số',
         code: 'HOANVI',
-        brief: 'Viết hàm swap(int &a, int &b) để sắp xếp 3 số theo thứ tự tăng dần.',
+        brief: 'Viết hàm hoán vị swap(int &a, int &b) để sắp xếp 3 số tăng dần.',
         difficulty: 'easy',
       },
     ],
@@ -110,33 +110,33 @@ export const CURRICULUM_TOPICS: CurriculumTopic[] = [
     concepts: ['Mảng 1 chiều', 'Tìm min/max & vị trí', 'Sắp xếp mảng (Selection/Bubble/std::sort)', 'Tìm kiếm tuyến tính & nhị phân', 'Mảng 2 chiều (Ma trận)', 'Đường chéo ma trận vuông'],
     suggestedProblems: [
       {
-        name: 'Tìm phần tử lớn thứ nhì trong mảng',
-        code: 'SECONDMAX',
+        name: 'Tìm số lớn thứ nhì',
+        code: 'MAX2',
         brief: 'Cho mảng n số nguyên. Tìm giá trị lớn thứ nhì phân biệt trong mảng.',
         difficulty: 'easy',
       },
       {
-        name: 'Đếm số lần xuất hiện của các phần tử',
-        code: 'DEMPHANTU',
+        name: 'Đếm phần tử xuất hiện',
+        code: 'DEMPT',
         brief: 'Đếm tần suất xuất hiện của từng số trong mảng và in theo thứ tự tăng dần.',
         difficulty: 'medium',
       },
       {
-        name: 'Tổng đường chéo chính và phụ của ma trận',
-        code: 'TONGCHEO',
-        brief: 'Cho ma trận vuông cấp n x n. Tính tổng các phần tử trên đường chéo chính và chéo phụ.',
+        name: 'Tổng đường chéo ma trận',
+        code: 'CHEO',
+        brief: 'Cho ma trận vuông cấp n x n. Tính tổng các phần tử trên đường chéo chính và phụ.',
         difficulty: 'easy',
       },
       {
-        name: 'Dãy con tăng dài nhất cơ bản',
-        code: 'DAYCONTANG',
+        name: 'Dãy con tăng liên tiếp',
+        code: 'DAYCON',
         brief: 'Tìm độ dài của dãy con liên tiếp tăng dần dài nhất trong mảng.',
         difficulty: 'medium',
       },
       {
-        name: 'Khai thác gỗ (Bài 4)',
-        code: 'WOOD',
-        brief: 'Tìm độ dài đoạn liên tiếp ngắn nhất các cây gỗ sao cho tổng sản lượng ít nhất là S.',
+        name: 'Khai thác gỗ',
+        code: 'GO',
+        brief: 'Tìm độ dài đoạn liên tiếp ngắn nhất các cây gỗ sao cho tổng sản lượng >= S.',
         difficulty: 'medium',
       },
     ],
@@ -151,27 +151,27 @@ export const CURRICULUM_TOPICS: CurriculumTopic[] = [
     concepts: ['std::string trong C++', 'Bảng mã ASCII & xử lý char', 'Xâu đối xứng (Palindrome)', 'Chuẩn hoá họ tên (viết hoa/xoá dấu cách)', 'Đếm số lượng từ', 'Cộng trừ 2 số nguyên lớn bằng chuỗi'],
     suggestedProblems: [
       {
-        name: 'Kiểm tra xâu đối xứng (Palindrome)',
+        name: 'Kiểm tra xâu đối xứng',
         code: 'PALIN',
-        brief: 'Kiểm tra một chuỗi ký tự có phải là xâu đối xứng hay không (bỏ qua khoảng trắng và chữ hoa thường).',
+        brief: 'Kiểm tra chuỗi ký tự có phải là xâu đối xứng (bỏ qua khoảng trắng và hoa thường).',
         difficulty: 'easy',
       },
       {
-        name: 'Chuẩn hoá tên người',
-        code: 'CHUANHOA',
-        brief: 'Xoá các khoảng trắng thừa ở đầu, cuối và giữa các từ; viết hoa chữ cái đầu mỗi từ.',
+        name: 'Chuẩn hoá họ tên',
+        code: 'CHUAN',
+        brief: 'Xoá khoảng trắng thừa, viết hoa chữ cái đầu mỗi từ trong họ tên.',
         difficulty: 'medium',
       },
       {
-        name: 'Đếm số từ trong văn bản',
+        name: 'Đếm số từ trong câu',
         code: 'DEMTU',
-        brief: 'Cho một câu tiếng Việt không dấu hoặc tiếng Anh. Đếm chính xác số lượng từ trong câu.',
+        brief: 'Cho một câu tiếng Việt không dấu. Đếm chính xác số lượng từ trong câu.',
         difficulty: 'easy',
       },
       {
-        name: 'Cộng hai số nguyên lớn',
-        code: 'BIGADD',
-        brief: 'Cho hai số nguyên dương có độ dài lên tới 100 chữ số. Tính tổng của chúng.',
+        name: 'Cộng 2 số nguyên lớn',
+        code: 'CONGSO',
+        brief: 'Cho hai số nguyên dương dài tới 100 chữ số. Tính tổng của chúng.',
         difficulty: 'hard',
       },
     ],
@@ -186,27 +186,27 @@ export const CURRICULUM_TOPICS: CurriculumTopic[] = [
     concepts: ['struct tự định nghĩa', 'std::pair', 'std::vector', 'std::set (tập hợp)', 'std::map (ánh xạ / từ điển)', 'std::stack & kiểm tra dấu ngoặc'],
     suggestedProblems: [
       {
-        name: 'Quản lý điểm học sinh bằng struct',
-        code: 'QLHOCSINH',
-        brief: 'Khai báo struct HocSinh gồm Tên, Toán, Tin. Sắp xếp danh sách học sinh theo điểm trung bình giảm dần.',
+        name: 'Quản lý điểm học sinh',
+        code: 'QLHS',
+        brief: 'Khai báo struct HocSinh, sắp xếp học sinh theo điểm trung bình giảm dần.',
         difficulty: 'medium',
       },
       {
-        name: 'Kiểm tra dãy ngoặc đúng bằng Stack',
-        code: 'NGOACDUNG',
-        brief: 'Cho một chuỗi gồm các dấu ngoặc tròn (), vuông [], nhọn {}. Kiểm tra xem chuỗi có hợp lệ không.',
+        name: 'Kiểm tra dấu ngoặc đúng',
+        code: 'NGOAC',
+        brief: 'Cho chuỗi ngoặc (), [], {}. Dùng Stack kiểm tra xem chuỗi có hợp lệ không.',
         difficulty: 'medium',
       },
       {
-        name: 'Đếm từ khác nhau dùng std::set',
+        name: 'Đếm từ phân biệt (Set)',
         code: 'TUSET',
-        brief: 'Đọc vào một đoạn văn bản và in ra danh sách các từ khác nhau theo thứ tự từ điển.',
+        brief: 'Đọc văn bản và in ra danh sách các từ phân biệt theo thứ tự từ điển.',
         difficulty: 'easy',
       },
       {
-        name: 'Tra cứu số điện thoại dùng std::map',
+        name: 'Tra cứu danh bạ (Map)',
         code: 'DANHBA',
-        brief: 'Xây dựng danh bạ điện thoại và thực hiện truy vấn số điện thoại theo tên nhanh chóng.',
+        brief: 'Xây dựng danh bạ và thực hiện truy vấn số điện thoại theo tên nhanh chóng.',
         difficulty: 'easy',
       },
     ],
@@ -215,11 +215,11 @@ export const CURRICULUM_TOPICS: CurriculumTopic[] = [
 
 // High quality initial sample problem ready out of the box
 export const SAMPLE_PROBLEM: ProblemData = {
-  id: 'default-tamgiac',
+  id: 'default-tg',
   topic: 'branching',
   topicName: 'Cấu trúc rẽ nhánh',
   problemName: 'Phân loại tam giác',
-  problemCode: 'TAMGIAC',
+  problemCode: 'TG',
   timeLimit: '1.0 giây',
   memoryLimit: '256 MB',
   difficulty: 'easy',
@@ -255,8 +255,8 @@ using namespace std;
 
 int main() {
     // Để tiện chấm thi Themis hoặc nộp online, mở comment 2 dòng dưới nếu đề yêu cầu đọc ghi file:
-    // freopen("TAMGIAC.inp", "r", stdin);
-    // freopen("TAMGIAC.out", "w", stdout);
+    // freopen("TG.inp", "r", stdin);
+    // freopen("TG.out", "w", stdout);
 
     ios_base::sync_with_stdio(false);
     cin.tie(NULL);

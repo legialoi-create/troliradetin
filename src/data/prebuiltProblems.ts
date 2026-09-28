@@ -1,13 +1,13 @@
 import { ProblemData } from '../types';
 
 export const PREBUILT_PROBLEMS: Record<string, ProblemData> = {
-  // 1. Cấu trúc rẽ nhánh: TAMGIAC
-  TAMGIAC: {
-    id: 'prebuilt-tamgiac',
+  // 1. Cấu trúc rẽ nhánh: TG
+  TG: {
+    id: 'prebuilt-tg',
     topic: 'branching',
     topicName: 'Cấu trúc rẽ nhánh',
     problemName: 'Phân loại tam giác',
-    problemCode: 'TAMGIAC',
+    problemCode: 'TG',
     timeLimit: '1.0 giây',
     memoryLimit: '256 MB',
     difficulty: 'easy',
@@ -29,8 +29,8 @@ Nếu không tạo thành tam giác, in ra 'KHONG PHAI TAM GIAC'.`,
 using namespace std;
 
 int main() {
-    // freopen("TAMGIAC.inp", "r", stdin);
-    // freopen("TAMGIAC.out", "w", stdout);
+    // freopen("TG.inp", "r", stdin);
+    // freopen("TG.out", "w", stdout);
     ios_base::sync_with_stdio(false);
     cin.tie(NULL);
 
@@ -253,13 +253,13 @@ int main() {
     createdAt: Date.now(),
   },
 
-  // 4. Mảng: SECONDMAX
-  SECONDMAX: {
-    id: 'prebuilt-secondmax',
+  // 4. Mảng: MAX2
+  MAX2: {
+    id: 'prebuilt-max2',
     topic: 'array',
     topicName: 'Mảng (1 Chiều & 2 Chiều)',
     problemName: 'Tìm số lớn thứ nhì trong mảng',
-    problemCode: 'SECONDMAX',
+    problemCode: 'MAX2',
     timeLimit: '1.0 giây',
     memoryLimit: '256 MB',
     difficulty: 'easy',
@@ -279,8 +279,8 @@ Dòng 2: n số nguyên a1, a2, ..., an (-10^9 <= ai <= 10^9).`,
 using namespace std;
 
 int main() {
-    // freopen("SECONDMAX.inp", "r", stdin);
-    // freopen("SECONDMAX.out", "w", stdout);
+    // freopen("MAX2.inp", "r", stdin);
+    // freopen("MAX2.out", "w", stdout);
     ios_base::sync_with_stdio(false);
     cin.tie(NULL);
 
@@ -427,13 +427,13 @@ int main() {
     createdAt: Date.now(),
   },
 
-  // 6. Cấu trúc dữ liệu: NGOACDUNG
-  NGOACDUNG: {
-    id: 'prebuilt-ngoacdung',
+  // 6. Cấu trúc dữ liệu: NGOAC
+  NGOAC: {
+    id: 'prebuilt-ngoac',
     topic: 'struct_ds',
     topicName: 'Cấu trúc dữ liệu cơ bản',
     problemName: 'Kiểm tra dãy ngoặc đúng bằng Stack',
-    problemCode: 'NGOACDUNG',
+    problemCode: 'NGOAC',
     timeLimit: '1.0 giây',
     memoryLimit: '256 MB',
     difficulty: 'medium',
@@ -471,8 +471,8 @@ bool isValidBracket(const string &s) {
 }
 
 int main() {
-    // freopen("NGOACDUNG.inp", "r", stdin);
-    // freopen("NGOACDUNG.out", "w", stdout);
+    // freopen("NGOAC.inp", "r", stdin);
+    // freopen("NGOAC.out", "w", stdout);
     ios_base::sync_with_stdio(false);
     cin.tie(NULL);
 

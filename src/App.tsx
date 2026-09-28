@@ -68,6 +68,8 @@ export default function App() {
   const [isHistoryOpen, setIsHistoryOpen] = useState(false);
   const [isDownloading, setIsDownloading] = useState(false);
   const [isRegeneratingTests, setIsRegeneratingTests] = useState(false);
+  const [isSyncingWithCpp, setIsSyncingWithCpp] = useState(false);
+  const [cppSyncSuccessMsg, setCppSyncSuccessMsg] = useState<string | null>(null);
 
   // Safe localStorage helper to protect against QuotaExceededError
   const safeSaveHistory = (items: ProblemData[]) => {
@@ -200,6 +202,32 @@ export default function App() {
         setIsRegeneratingTests(false);
       }
     }, 'Sinh lại 20 test bằng AI');
+  };
+
+  // GIẢI PHÁP 3: Biên dịch C++ bằng g++ và thực thi các bộ test để lấy Output chuẩn xác 100%
+  const handleSyncWithCpp = () => {
+    requireAuth(async () => {
+      try {
+        setIsSyncingWithCpp(true);
+        setCppSyncSuccessMsg(null);
+        const res = await fetch('/api/sync-tests-with-cpp', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ problem: currentProblem }),
+        });
+        const data = await safeParseJsonResponse(res);
+        if (!res.ok || !data.success) {
+          throw new Error(data.error || 'Lỗi khi biên dịch và thực thi C++.');
+        }
+        handleUpdateProblem(data.problem);
+        setCppSyncSuccessMsg(data.message || 'Đã đồng bộ toàn bộ Output test cases từ code C++ chuẩn!');
+        setTimeout(() => setCppSyncSuccessMsg(null), 6000);
+      } catch (err: any) {
+        alert('Lỗi đồng bộ Output bằng C++: ' + err.message);
+      } finally {
+        setIsSyncingWithCpp(false);
+      }
+    }, 'Chạy Code C++ chuẩn sinh Output');
   };
 
   // Header quick download
@@ -337,6 +365,22 @@ export default function App() {
           </div>
         </div>
 
+        {/* Success toast notification for C++ execution */}
+        {cppSyncSuccessMsg && (
+          <div className="mb-4 bg-emerald-50 border border-emerald-300 text-emerald-900 px-4 py-3 rounded-xl flex items-center justify-between shadow-sm animate-fade-in">
+            <div className="flex items-center gap-2 text-xs sm:text-sm font-medium">
+              <span className="w-2 h-2 rounded-full bg-emerald-500 animate-ping"></span>
+              <span>{cppSyncSuccessMsg}</span>
+            </div>
+            <button
+              onClick={() => setCppSyncSuccessMsg(null)}
+              className="text-xs text-emerald-700 hover:text-emerald-900 font-bold ml-3"
+            >
+              ✕
+            </button>
+          </div>
+        )}
+
         {/* Tab Content Views */}
         <div className="transition-all">
           {activeTab === 'statement' && (
@@ -346,13 +390,21 @@ export default function App() {
               onNavigateToTests={() => setActiveTab('tests')}
             />
           )}
-          {activeTab === 'solution' && <SolutionView problem={currentProblem} />}
+          {activeTab === 'solution' && (
+            <SolutionView
+              problem={currentProblem}
+              onSyncWithCpp={handleSyncWithCpp}
+              isSyncingWithCpp={isSyncingWithCpp}
+            />
+          )}
           {activeTab === 'tests' && (
             <TestCasesView
               problem={currentProblem}
               onUpdateTestCases={handleUpdateTestCases}
               onRegenerateTests={handleRegenerateTests}
               isRegenerating={isRegeneratingTests}
+              onSyncWithCpp={handleSyncWithCpp}
+              isSyncingWithCpp={isSyncingWithCpp}
             />
           )}
           {activeTab === 'zip' && (

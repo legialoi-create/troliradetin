@@ -14,9 +14,15 @@ import { ProblemData } from '../types';
 
 interface SolutionViewProps {
   problem: ProblemData;
+  onSyncWithCpp?: () => void | Promise<void>;
+  isSyncingWithCpp?: boolean;
 }
 
-export const SolutionView: React.FC<SolutionViewProps> = ({ problem }) => {
+export const SolutionView: React.FC<SolutionViewProps> = ({
+  problem,
+  onSyncWithCpp,
+  isSyncingWithCpp = false,
+}) => {
   const [copied, setCopied] = useState(false);
   const [useFreopen, setUseFreopen] = useState(false);
 
@@ -73,9 +79,29 @@ export const SolutionView: React.FC<SolutionViewProps> = ({ problem }) => {
             <span className="text-[10px] text-slate-500 uppercase px-1.5 py-0.5 rounded bg-slate-800">
               C++17 / C++20
             </span>
+            {problem.executedByCpp && (
+              <span className="text-[11px] font-semibold text-emerald-400 bg-emerald-950/70 border border-emerald-800/80 px-2 py-0.5 rounded flex items-center gap-1">
+                <Check className="w-3 h-3 text-emerald-400" />
+                Đã sinh 100% Output bằng g++ ({problem.cppExecutionTimeMs}ms)
+              </span>
+            )}
           </div>
 
           <div className="flex items-center space-x-2">
+            {/* Run C++ Button */}
+            {onSyncWithCpp && (
+              <button
+                id="btn-sync-cpp-from-solution"
+                onClick={onSyncWithCpp}
+                disabled={isSyncingWithCpp}
+                className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-bold text-white bg-emerald-600 hover:bg-emerald-500 rounded-lg transition-colors border border-emerald-500 disabled:opacity-50"
+                title="Biên dịch code C++ này và chạy lại toàn bộ test cases để cập nhật 100% Output chính xác"
+              >
+                <Cpu className={`w-3.5 h-3.5 ${isSyncingWithCpp ? 'animate-spin' : ''}`} />
+                <span>{isSyncingWithCpp ? 'Đang chạy g++...' : 'Chạy C++ Sinh Output 20 Test'}</span>
+              </button>
+            )}
+
             {/* Themis Freopen Toggle */}
             <label className="inline-flex items-center gap-2 cursor-pointer text-xs text-slate-300 mr-2 bg-slate-800/80 px-2.5 py-1 rounded-lg border border-slate-700">
               <input

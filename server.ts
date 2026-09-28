@@ -4,6 +4,7 @@ import { GoogleGenAI, Type } from "@google/genai";
 import dotenv from "dotenv";
 import { PREBUILT_PROBLEMS } from "./src/data/prebuiltProblems";
 import { enrichAndEnforceSubtaskCompliance, validateProblemTestCases } from "./src/utils/testValidator";
+import { executeCppSolution } from "./src/server/cppRunner";
 
 dotenv.config();
 
@@ -112,21 +113,22 @@ async function executeGeminiWithRetry(
 
 // Find offline fallback problem by topic or code if all models are unavailable
 function getOfflineFallback(topic: string, problemCode?: string): any {
-  if (problemCode && PREBUILT_PROBLEMS[problemCode.toUpperCase()]) {
-    return JSON.parse(JSON.stringify(PREBUILT_PROBLEMS[problemCode.toUpperCase()]));
+  const cleanCode = (problemCode || "").toUpperCase().replace(/[^A-Z0-9]/g, "").slice(0, 6);
+  if (cleanCode && PREBUILT_PROBLEMS[cleanCode]) {
+    return JSON.parse(JSON.stringify(PREBUILT_PROBLEMS[cleanCode]));
   }
 
   const topicMap: Record<string, string> = {
-    branching: "TAMGIAC",
+    branching: "TG",
     loop: "KTSNT",
     function: "FIBO",
-    array: "SECONDMAX",
+    array: "MAX2",
     string: "PALIN",
-    struct_ds: "NGOACDUNG",
+    struct_ds: "NGOAC",
   };
 
-  const code = topicMap[topic] || "TAMGIAC";
-  const problem = PREBUILT_PROBLEMS[code] || PREBUILT_PROBLEMS["TAMGIAC"];
+  const code = topicMap[topic] || "TG";
+  const problem = PREBUILT_PROBLEMS[code] || PREBUILT_PROBLEMS["TG"] || Object.values(PREBUILT_PROBLEMS)[0];
   return JSON.parse(JSON.stringify(problem));
 }
 
@@ -140,6 +142,18 @@ app.get(["/api/health", "/health"], (_req, res) => {
   });
 });
 
+// Helper: Normalize & ensure problem code is uppercase, alphanumeric, under 6 chars
+function normalizeProblemCode(code: string | undefined, defaultPrefix = "BAI"): string {
+  let cleaned = (code || "")
+    .trim()
+    .toUpperCase()
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .replace(/[^A-Z0-9]/g, "");
+  if (!cleaned) cleaned = defaultPrefix;
+  return cleaned.slice(0, 6);
+}
+
 // API: Generate Problem + Solution + 20 Tests
 app.post(["/api/generate-problem", "/generate-problem"], async (req, res) => {
   const {
@@ -151,6 +165,8 @@ app.post(["/api/generate-problem", "/generate-problem"], async (req, res) => {
     problemName = "",
     testCount = 20,
   } = req.body;
+
+  const sanitizedUserCode = problemCode ? normalizeProblemCode(problemCode) : "";
 
   const difficultyText =
     difficulty === "easy"
@@ -167,38 +183,45 @@ THÔNG TIN YÊU CẦU:
   Lộ trình tổng quát cho học sinh mới bắt đầu gồm: Cấu trúc rẽ nhánh → Cấu trúc lặp → Hàm → Mảng → Chuỗi → Cấu trúc dữ liệu.
 - Mức độ khó: ${difficultyText}
 ${problemName ? `- Tên bài gợi ý: ${problemName}` : ""}
-${problemCode ? `- Mã bài gợi ý (1 từ viết hoa không dấu): ${problemCode}` : ""}
+${sanitizedUserCode ? `- Mã bài gợi ý (BẮT BUỘC dưới hoặc bằng 6 kí tự viết hoa không dấu): ${sanitizedUserCode}` : ""}
 ${customPrompt ? `- Yêu cầu bổ sung của giáo viên: "${customPrompt}"` : ""}
 
-YÊU CẦU BẮT BUỘC:
-1. Đề bài (description):
-   - Ngữ cảnh thực tế gần gũi, thú vị hoặc bài toán tin học kinh điển, sư phạm.
-   - Trình bày rõ ràng bằng tiếng Việt.
-   - Định dạng vào (inputFormat): quy định cụ thể từng dòng chứa gì.
-   - Định dạng ra (outputFormat): quy định cụ thể in ra cái gì, có xuống dòng không.
-   - Ràng buộc dữ liệu (constraints): BẮT BUỘC chia thành 2 đến 3 Subtask với tỷ lệ phần trăm số test/điểm cụ thể.
+QUY TẮC BẮT BUỘC VỀ TÊN BÀI, MÃ BÀI, INPUT, OUTPUT VIỆT HOÁ NGẮN GỌN (DƯỚI 6 KÍ TỰ):
+1. **Mã bài (problemCode)**:
+   - BẮT BUỘC là 1 từ viết hoa không dấu, thuần Việt ngắn gọn **DƯỚI HOẶC BẰNG 6 KÍ TỰ** (Tối đa 6 ký tự, ví dụ: TONG, TG, SNT, MAX2, FIBO, PALIN, UCLN, BCNN, NGOAC, DEMTU, MANG, XAU, DEMNT, SOCHAN, TDIEN, SNGAY...).
+   - Tuyệt đối không đặt mã bài dài hơn 6 ký tự.
+2. **Tên bài (problemName)**:
+   - Tiếng Việt thuần túy ngắn gọn, súc tích, sư phạm (dưới 6 từ, ví dụ: "Phân loại tam giác", "Kiểm tra số nguyên tố", "Tính tổng mảng", "Tìm số lớn nhì", "Dãy Fibonacci", "Xâu đối xứng", "Ước chung lớn nhất"...).
+3. **Định dạng file Dữ liệu vào & Dữ liệu ra**:
+   - File dữ liệu vào: <MABAI>.INP (ví dụ: TONG.INP, TG.INP, SNT.INP)
+   - File dữ liệu ra: <MABAI>.OUT (ví dụ: TONG.OUT, TG.OUT, SNT.OUT)
+   - Cả hai file đều đồng bộ theo mã bài dưới 6 ký tự trên.
+4. **Mô tả Dữ liệu vào (inputFormat) & Dữ liệu ra (outputFormat)**:
+   - Trình bày thuần Việt, súc tích, ngắn gọn, chỉ rõ từng dòng chứa gì, cách nhau khoảng trắng hay xuống dòng.
+5. **Ràng buộc dữ liệu (constraints)**:
+   - BẮT BUỘC chia thành 2 đến 3 Subtask với tỷ lệ phần trăm số test/điểm cụ thể.
      Ví dụ:
      - 20% số test có $n \\le 100$.
      - 30% số test tiếp theo có $100 < n \\le 1000$.
      - 50% số test còn lại có $1000 < n \\le 10^5$.
-2. Mã nguồn lời giải (solutionCpp):
+6. **Mã nguồn lời giải (solutionCpp)**:
    - Viết bằng C++ chuẩn (sử dụng #include <iostream>, #include <vector>, v.v.).
    - Comment tiếng Việt giải thích rõ ràng từng khối lệnh.
-   - Có 2 dòng comment đọc ghi file cho hệ thống chấm Themis:
-     // freopen("<TENBAI>.inp", "r", stdin);
-     // freopen("<TENBAI>.out", "w", stdout);
+   - Có 2 dòng comment đọc ghi file cho hệ thống chấm Themis sử dụng đúng mã bài <= 6 ký tự:
+     // freopen("<MABAI>.inp", "r", stdin);
+     // freopen("<MABAI>.out", "w", stdout);
    - Mã nguồn phải tối ưu, đúng 100% không có lỗi biên dịch.
-3. Bộ đúng ${testCount} test cases (test01 đến test${testCount < 10 ? "0" + testCount : testCount}):
-   - RẤT QUAN TRỌNG: Đầu ra output của mỗi test case phải CHÍNH XÁC TUYỆT ĐỐI theo đúng thuật toán của đề bài và mã nguồn C++.
+7. **Bộ đúng ${testCount} test cases (test01 đến test${testCount < 10 ? "0" + testCount : testCount})**:
+   - Đầu ra output của mỗi test case phải CHÍNH XÁC TUYỆT ĐỐI theo đúng thuật toán của đề bài và mã nguồn C++.
    - KIỂM TRA ĐÚNG RÀNG BUỘC CÁC SUBTASK:
      * test01: BẮT BUỘC trùng khớp 100% từng ký tự với sampleInput và sampleOutput trong đề bài (isSample = true).
      * Phân chia các test case khớp đúng tỷ lệ % của từng Subtask trong đề bài.
-     * MỌI test case thuộc Subtask nào thì dữ liệu vào PHẢI TUÂN THỦ NGHIÊM NGẶT giới hạn của Subtask đó (ví dụ: test thuộc Subtask 1 có $n \\le 100$ thì kích thước và giá trị tuyệt đối không được vượt quá 100).
+     * MỌI test case thuộc Subtask nào thì dữ liệu vào PHẢI TUÂN THỦ NGHIÊM NGẶT giới hạn của Subtask đó.
      * Các test cuối cùng của Subtask lớn nhất PHẢI chạm ngưỡng giới hạn tối đa đề bài.
-4. QUY TẮC ĐỊNH DẠNG VĂN BẢN VÀ CÔNG THỨC TOÁN (BẮT BUỘC):
+8. **QUY TẮC ĐỊNH DẠNG VĂN BẢN VÀ CÔNG THỨC TOÁN (BẮT BUỘC)**:
    - TUYỆT ĐỐI KHÔNG dùng dấu ** ở đầu hoặc cuối tiêu đề, câu văn hoặc đoạn văn.
-   - TẤT CẢ các công thức toán học, biến số (ví dụ: $n$, $a, b, c$), bất đẳng thức, lũy thừa, giới hạn khoảng (ví dụ: $1 \\le n \\le 10^5$, $a, b \\le 10^9$, $10^9$, $O(N)$, $A_i$) BẮT BUỘC phải viết dưới dạng LaTeX chuẩn kẹp giữa 2 dấu $ ở đầu và cuối: ví dụ $1 \\le n \\le 10^5$, không viết thô dạng 1 <= n <= 10^5.
-   - CHỈ bọc dấu $ cho các biến số/công thức toán học thực sự. TUYỆT ĐỐI KHÔNG bọc dấu $ vào các chữ cái nằm trong từ ngữ tiếng Việt thông thường (ví dụ: KHÔNG được viết "mộ$t$", "$d$ương", "$l$ẻ", "$c$hẵn" - phải viết đúng là "một", "dương", "lẻ", "chẵn").
+   - TẤT CẢ các công thức toán học, biến số ($n$, $a, b, c$, $1 \\le n \\le 10^5$, $a, b \\le 10^9$, $10^9$, $O(N)$, $A_i$) BẮT BUỘC phải viết dưới dạng LaTeX chuẩn kẹp giữa 2 dấu $ ở đầu và cuối: ví dụ $1 \\le n \\le 10^5$, không viết thô dạng 1 <= n <= 10^5.
+   - CHỈ bọc dấu $ cho các biến số/công thức toán học thực sự. TUYỆT ĐỐI KHÔNG bọc dấu $ vào các chữ cái nằm trong từ ngữ tiếng Việt thông thường.
 
 Hãy trả về định dạng JSON khớp với schema quy định.`;
 
@@ -207,19 +230,19 @@ Hãy trả về định dạng JSON khớp với schema quy định.`;
     responseSchema: {
       type: Type.OBJECT,
       properties: {
-        problemName: { type: Type.STRING, description: "Tên bài toán tiếng Việt" },
-        problemCode: { type: Type.STRING, description: "Mã bài 1 từ viết hoa không dấu ngắn gọn" },
+        problemName: { type: Type.STRING, description: "Tên bài toán tiếng Việt ngắn gọn, súc tích (dưới 6 từ)" },
+        problemCode: { type: Type.STRING, description: "Mã bài 1 từ viết hoa không dấu ngắn gọn BẮT BUỘC dưới hoặc bằng 6 kí tự (ví dụ: TONG, TG, SNT, MAX2)" },
         timeLimit: { type: Type.STRING, description: "Thời gian chạy, ví dụ: '1.0 giây'" },
         memoryLimit: { type: Type.STRING, description: "Bộ nhớ tối đa, ví dụ: '256 MB'" },
         difficulty: { type: Type.STRING, enum: ["easy", "medium", "hard"] },
         description: { type: Type.STRING, description: "Mô tả đề bài chi tiết hấp dẫn" },
-        inputFormat: { type: Type.STRING, description: "Quy cách dữ liệu vào" },
-        outputFormat: { type: Type.STRING, description: "Quy cách dữ liệu ra" },
+        inputFormat: { type: Type.STRING, description: "Quy cách dữ liệu vào thuần Việt ngắn gọn" },
+        outputFormat: { type: Type.STRING, description: "Quy cách dữ liệu ra thuần Việt ngắn gọn" },
         constraints: { type: Type.STRING, description: "Giới hạn và phân bổ subtask" },
         sampleInput: { type: Type.STRING, description: "Dữ liệu vào của test ví dụ" },
         sampleOutput: { type: Type.STRING, description: "Dữ liệu ra tương ứng của test ví dụ" },
         sampleExplanation: { type: Type.STRING, description: "Giải thích test ví dụ" },
-        solutionCpp: { type: Type.STRING, description: "Mã nguồn C++ lời giải hoàn chỉnh" },
+        solutionCpp: { type: Type.STRING, description: "Mã nguồn C++ lời giải hoàn chỉnh kèm 2 dòng comment freopen file .inp/.out dưới 6 kí tự" },
         algorithmExplanation: { type: Type.STRING, description: "Giải thích thuật toán sư phạm" },
         timeComplexity: { type: Type.STRING, description: "Độ phức tạp thời gian, ví dụ: O(N)" },
         spaceComplexity: { type: Type.STRING, description: "Độ phức tạp bộ nhớ, ví dụ: O(1)" },
@@ -280,6 +303,9 @@ Hãy trả về định dạng JSON khớp với schema quy định.`;
     result.createdAt = Date.now();
     result.generatedByModel = modelUsed;
 
+    // Enforce problemCode length <= 6 and uppercase alphanumeric
+    result.problemCode = normalizeProblemCode(result.problemCode || sanitizedUserCode, "BAI");
+
     // Ensure 20 tests are numbered nicely
     if (Array.isArray(result.testCases)) {
       result.testCases = result.testCases.map((tc: any, idx: number) => {
@@ -296,6 +322,32 @@ Hãy trả về định dạng JSON khớp với schema quy định.`;
           note: tc.note || (idx === 0 ? "Test ví dụ đề bài" : `Test trường hợp ${num}`),
         };
       });
+    }
+
+    // GIẢI PHÁP 3: BIÊN DỊCH VÀ CHẠY CODE CHUẨN C++ ĐỂ SINH OUTPUT CHÍNH XÁC 100%
+    if (result.solutionCpp && Array.isArray(result.testCases) && result.testCases.length > 0) {
+      try {
+        console.log(`[C++ Engine] Compiling & executing C++ solution for ${result.problemCode}...`);
+        const execRes = await executeCppSolution(
+          result.solutionCpp,
+          result.testCases,
+          result.sampleInput
+        );
+        if (execRes.success) {
+          result.testCases = execRes.testCases;
+          if (execRes.sampleOutput) {
+            result.sampleOutput = execRes.sampleOutput;
+          }
+          result.executedByCpp = true;
+          result.cppExecutionTimeMs = execRes.totalTimeMs;
+          console.log(`[C++ Engine] Successfully executed all ${result.testCases.length} tests in ${execRes.totalTimeMs}ms (100% accurate output)`);
+        } else {
+          console.warn('[C++ Engine] Compilation warning/error:', execRes.compileError);
+          result.cppCompileError = execRes.compileError;
+        }
+      } catch (runErr) {
+        console.error('[C++ Engine] Execution error:', runErr);
+      }
     }
 
     // AUTOMATED VALIDATION & SUBTASK COMPLIANCE AUDIT
@@ -394,9 +446,28 @@ Bao gồm từ test01 đến test${count < 10 ? "0" + count : count}.`;
       };
     });
 
+    let finalTests = formattedTests;
+    // GIẢI PHÁP 3: BIÊN DỊCH VÀ CHẠY CODE CHUẨN C++ ĐỂ SINH OUTPUT CHÍNH XÁC 100%
+    if (problem.solutionCpp && Array.isArray(formattedTests) && formattedTests.length > 0) {
+      try {
+        console.log(`[C++ Engine] Compiling & executing C++ solution for regenerated tests...`);
+        const execRes = await executeCppSolution(
+          problem.solutionCpp,
+          formattedTests,
+          problem.sampleInput
+        );
+        if (execRes.success) {
+          finalTests = execRes.testCases;
+          console.log(`[C++ Engine] Regenerated tests executed in ${execRes.totalTimeMs}ms with 100% precision`);
+        }
+      } catch (e) {
+        console.error('[C++ Runner in generate-more-tests] error:', e);
+      }
+    }
+
     const mockProblem = {
       ...problem,
-      testCases: formattedTests,
+      testCases: finalTests,
     };
     const validatedProblem = enrichAndEnforceSubtaskCompliance(mockProblem);
 
@@ -414,11 +485,58 @@ Bao gồm từ test01 đến test${count < 10 ? "0" + count : count}.`;
   }
 });
 
+// API: GIẢI PHÁP 3 - Đồng bộ & Sinh lại toàn bộ Output test cases từ Mã nguồn C++ chuẩn
+app.post(["/api/sync-tests-with-cpp", "/sync-tests-with-cpp"], async (req, res) => {
+  const { problem } = req.body;
+  if (!problem || !problem.solutionCpp) {
+    return res.status(400).json({ success: false, error: "Thiếu mã nguồn C++ chuẩn để thực thi." });
+  }
+
+  try {
+    console.log(`[C++ Engine] Manual trigger: Compiling & executing for ${problem.problemCode || 'problem'}...`);
+    const execRes = await executeCppSolution(
+      problem.solutionCpp,
+      problem.testCases || [],
+      problem.sampleInput
+    );
+
+    if (!execRes.success) {
+      return res.status(400).json({
+        success: false,
+        compileError: execRes.compileError,
+        error: `Không thể biên dịch mã nguồn C++: ${execRes.compileError}`,
+      });
+    }
+
+    let updatedProblem = {
+      ...problem,
+      testCases: execRes.testCases,
+      sampleOutput: execRes.sampleOutput || problem.sampleOutput,
+      executedByCpp: true,
+      cppExecutionTimeMs: execRes.totalTimeMs,
+    };
+
+    updatedProblem = enrichAndEnforceSubtaskCompliance(updatedProblem);
+
+    return res.json({
+      success: true,
+      problem: updatedProblem,
+      message: `Đã biên dịch và thực thi C++ thành công toàn bộ ${execRes.testCases.length} test cases trong ${execRes.totalTimeMs}ms! Output chuẩn xác 100%.`,
+    });
+  } catch (err: any) {
+    console.error('[C++ Runner manual error]:', err);
+    return res.status(500).json({
+      success: false,
+      error: `Lỗi khi thực thi C++: ${err.message}`,
+    });
+  }
+});
+
 // API: Validate problem test cases against subtask constraints & specifications
 app.post(["/api/validate-problem-tests", "/validate-problem-tests"], (req, res) => {
   const { problem } = req.body;
   if (!problem) {
-    return res.status(400).json({ success: false, error: "Thiếu dữ liệu bài toán để thẩm định." });
+    return res.status(400).json({ success: false, error: "Thiếu dữ liệu bài toán để kiểm tra." });
   }
 
   try {
@@ -432,7 +550,7 @@ app.post(["/api/validate-problem-tests", "/validate-problem-tests"], (req, res) 
     console.error("[Validate Tests] Error:", err);
     return res.status(500).json({
       success: false,
-      error: "Không thể thẩm định bộ test: " + (err?.message || String(err)),
+      error: "Không thể kiểm tra bộ test: " + (err?.message || String(err)),
     });
   }
 });
@@ -574,10 +692,8 @@ Hãy trả về định dạng JSON khớp với schema quy định.`;
     result.createdAt = Date.now();
     result.generatedByModel = modelUsed;
 
-    // Preserve problemCode if AI modified it unnecessarily
-    if (!result.problemCode) {
-      result.problemCode = problem.problemCode;
-    }
+    // Preserve problemCode if AI modified it unnecessarily or ensure under 6 chars
+    result.problemCode = normalizeProblemCode(result.problemCode || problem.problemCode, "BAI");
 
     // Format tests
     if (Array.isArray(result.testCases)) {
