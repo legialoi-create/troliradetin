@@ -20,6 +20,7 @@ import { TestCasesView } from './components/TestCasesView';
 import { ZipPackagingView } from './components/ZipPackagingView';
 import { GenerateProblemModal } from './components/GenerateProblemModal';
 import { HistoryDrawer } from './components/HistoryDrawer';
+import { SkillModal } from './components/SkillModal';
 import { generateThemisTestZip, downloadBlob } from './utils/zipGenerator';
 import { enrichAndEnforceSubtaskCompliance } from './utils/testValidator';
 import { safeParseJsonResponse } from './utils/apiHelper';
@@ -66,11 +67,19 @@ export default function App() {
   const [modalInitialName, setModalInitialName] = useState('');
   const [modalInitialDifficulty, setModalInitialDifficulty] = useState<Difficulty>('easy');
   const [isHistoryOpen, setIsHistoryOpen] = useState(false);
+  const [isSkillModalOpen, setIsSkillModalOpen] = useState(false);
   const [isDownloading, setIsDownloading] = useState(false);
   const [isRegeneratingTests, setIsRegeneratingTests] = useState(false);
   const [isSyncingWithCpp, setIsSyncingWithCpp] = useState(false);
   const [isAutoRepairingCpp, setIsAutoRepairingCpp] = useState(false);
+  const [isAuditingThreeLevel, setIsAuditingThreeLevel] = useState(false);
   const [cppSyncSuccessMsg, setCppSyncSuccessMsg] = useState<string | null>(null);
+  const [cppErrorMsg, setCppErrorMsg] = useState<string | null>(null);
+
+  const showErrorToast = (msg: string) => {
+    setCppErrorMsg(msg);
+    setTimeout(() => setCppErrorMsg(null), 7000);
+  };
 
   // Safe localStorage helper to protect against QuotaExceededError
   const safeSaveHistory = (items: ProblemData[]) => {
@@ -170,6 +179,13 @@ export default function App() {
     });
   };
 
+  const handleUpdateSolutionCode = (newCode: string) => {
+    setCurrentProblem((prev) => ({
+      ...prev,
+      solutionCpp: newCode,
+    }));
+  };
+
   const handleUpdateTestCases = (newTests: TestCase[]) => {
     setCurrentProblem((prev) => {
       const updated = {
@@ -184,6 +200,7 @@ export default function App() {
     requireAuth(async () => {
       try {
         setIsRegeneratingTests(true);
+        setCppErrorMsg(null);
         const res = await fetch('/api/generate-more-tests', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
@@ -196,25 +213,67 @@ export default function App() {
         if (!res.ok || !data.success) {
           throw new Error(data.error || 'Lỗi sinh lại test.');
         }
-        handleUpdateTestCases(data.testCases);
+        if (data.problem) {
+          handleUpdateProblem(data.problem);
+        } else {
+          handleUpdateTestCases(data.testCases);
+        }
+        setCppSyncSuccessMsg(
+          'Đã dùng code C++ (generator.cpp) tạo lại 20 test cases và hoàn tất Thẩm định độc lập 3 cấp độ!'
+        );
+        setTimeout(() => setCppSyncSuccessMsg(null), 6000);
       } catch (err: any) {
-        alert('Không thể sinh lại bộ test: ' + err.message);
+        showErrorToast('Không thể sinh lại bộ test: ' + err.message);
       } finally {
         setIsRegeneratingTests(false);
       }
-    }, 'Sinh lại 20 test bằng AI');
+    }, 'Sinh lại 20 test bằng Code C++');
+  };
+
+  // Thẩm định độc lập 3 cấp độ (Zero-Trust Audit: generator.cpp + oracle_bf.cpp + solution.cpp)
+  const handleAuditThreeLevelCpp = () => {
+    requireAuth(async () => {
+      try {
+        setIsAuditingThreeLevel(true);
+        setCppSyncSuccessMsg(null);
+        setCppErrorMsg(null);
+        const res = await fetch('/api/audit-3-level-cpp', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ problem: currentProblem }),
+        });
+        const data = await safeParseJsonResponse(res);
+        if (!res.ok || !data.success) {
+          throw new Error(data.error || 'Không thể thực hiện thẩm định 3 cấp độ.');
+        }
+        handleUpdateProblem(data.problem);
+        setCppSyncSuccessMsg(
+          data.message ||
+            'Đã hoàn tất Thẩm định Độc lập 3 Cấp độ (Zero-Trust Audit) và sinh 20 test bằng Code C++!'
+        );
+        setTimeout(() => setCppSyncSuccessMsg(null), 8000);
+      } catch (err: any) {
+        showErrorToast('Lỗi thẩm định độc lập 3 cấp độ: ' + err.message);
+      } finally {
+        setIsAuditingThreeLevel(false);
+      }
+    }, 'Thẩm định độc lập 3 cấp độ & Sinh test bằng Code C++');
   };
 
   // GIẢI PHÁP 3: Biên dịch C++ bằng g++ và thực thi các bộ test để lấy Output chuẩn xác 100%
-  const handleSyncWithCpp = () => {
+  const handleSyncWithCpp = (customCode?: string) => {
     requireAuth(async () => {
       try {
         setIsSyncingWithCpp(true);
         setCppSyncSuccessMsg(null);
+        setCppErrorMsg(null);
+        const problemPayload = customCode
+          ? { ...currentProblem, solutionCpp: customCode }
+          : currentProblem;
         const res = await fetch('/api/sync-tests-with-cpp', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ problem: currentProblem }),
+          body: JSON.stringify({ problem: problemPayload }),
         });
         const data = await safeParseJsonResponse(res);
         if (!res.ok || !data.success) {
@@ -224,7 +283,7 @@ export default function App() {
         setCppSyncSuccessMsg(data.message || 'Đã đồng bộ toàn bộ Output test cases từ code C++ chuẩn!');
         setTimeout(() => setCppSyncSuccessMsg(null), 6000);
       } catch (err: any) {
-        alert('Lỗi đồng bộ Output bằng C++: ' + err.message);
+        showErrorToast('Lỗi đồng bộ Output bằng C++: ' + err.message);
       } finally {
         setIsSyncingWithCpp(false);
       }
@@ -236,6 +295,7 @@ export default function App() {
     requireAuth(async () => {
       try {
         setIsDownloading(true);
+        setCppErrorMsg(null);
         const blob = await generateThemisTestZip(currentProblem, {
           includeSolution: true,
           includeProblemDoc: true,
@@ -243,7 +303,7 @@ export default function App() {
         });
         downloadBlob(blob, `${currentProblem.problemCode}_TEST_THEMIS.zip`);
       } catch (err: any) {
-        alert('Lỗi tải file ZIP: ' + err.message);
+        showErrorToast('Lỗi tải file ZIP: ' + err.message);
       } finally {
         setIsDownloading(false);
       }
@@ -256,6 +316,7 @@ export default function App() {
       try {
         setIsAutoRepairingCpp(true);
         setCppSyncSuccessMsg(null);
+        setCppErrorMsg(null);
         const res = await fetch('/api/auto-repair-cpp-solution', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
@@ -269,7 +330,7 @@ export default function App() {
         setCppSyncSuccessMsg(data.message || 'AI đã sửa và tối ưu mã nguồn C++ thành công!');
         setTimeout(() => setCppSyncSuccessMsg(null), 8000);
       } catch (err: any) {
-        alert('Lỗi tự động sửa mã nguồn: ' + err.message);
+        showErrorToast('Lỗi tự động sửa mã nguồn: ' + err.message);
       } finally {
         setIsAutoRepairingCpp(false);
       }
@@ -302,6 +363,7 @@ export default function App() {
         onOpenHistory={() => setIsHistoryOpen(true)}
         historyCount={history.length}
         onResetToSample={handleResetToSample}
+        onOpenSkillModal={() => setIsSkillModalOpen(true)}
       />
 
       {/* Curriculum Roadmap Progression */}
@@ -408,6 +470,22 @@ export default function App() {
           </div>
         )}
 
+        {/* Error toast notification */}
+        {cppErrorMsg && (
+          <div className="mb-4 bg-rose-50 border border-rose-300 text-rose-900 px-4 py-3 rounded-xl flex items-center justify-between shadow-sm animate-fade-in">
+            <div className="flex items-center gap-2 text-xs sm:text-sm font-medium">
+              <span className="w-2 h-2 rounded-full bg-rose-500"></span>
+              <span>{cppErrorMsg}</span>
+            </div>
+            <button
+              onClick={() => setCppErrorMsg(null)}
+              className="text-xs text-rose-700 hover:text-rose-900 font-bold ml-3"
+            >
+              ✕
+            </button>
+          </div>
+        )}
+
         {/* Tab Content Views */}
         <div className="transition-all">
           {activeTab === 'statement' && (
@@ -424,6 +502,7 @@ export default function App() {
               isSyncingWithCpp={isSyncingWithCpp}
               onAutoRepairCpp={handleAutoRepairCpp}
               isAutoRepairingCpp={isAutoRepairingCpp}
+              onUpdateSolutionCode={handleUpdateSolutionCode}
             />
           )}
           {activeTab === 'tests' && (
@@ -436,11 +515,14 @@ export default function App() {
               isSyncingWithCpp={isSyncingWithCpp}
               onAutoRepairCpp={handleAutoRepairCpp}
               isAutoRepairingCpp={isAutoRepairingCpp}
+              onAuditThreeLevel={handleAuditThreeLevelCpp}
+              isAuditingThreeLevel={isAuditingThreeLevel}
             />
           )}
           {activeTab === 'zip' && (
             <ZipPackagingView
               problem={currentProblem}
+              history={history}
               isDownloading={isDownloading}
               setIsDownloading={setIsDownloading}
             />
@@ -486,6 +568,12 @@ export default function App() {
         }}
         onClearHistory={() => setHistory([])}
         onImportHistory={handleImportHistory}
+      />
+
+      {/* Skill Specification Modal */}
+      <SkillModal
+        isOpen={isSkillModalOpen}
+        onClose={() => setIsSkillModalOpen(false)}
       />
 
       {/* Admin Login Modal */}

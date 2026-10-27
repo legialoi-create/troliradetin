@@ -176,7 +176,7 @@ export const ProblemStatementView: React.FC<ProblemStatementViewProps> = ({
         setWordSuccess(true);
         setTimeout(() => setWordSuccess(false), 2500);
       } catch (err: any) {
-        alert('Không thể xuất file Word: ' + err.message);
+        console.error('Không thể xuất file Word:', err);
       } finally {
         setDownloadingWordType(null);
       }
@@ -201,7 +201,7 @@ export const ProblemStatementView: React.FC<ProblemStatementViewProps> = ({
         setWordSuccess(true);
         setTimeout(() => setWordSuccess(false), 2500);
       } catch (err: any) {
-        alert('Không thể xuất file Word: ' + err.message);
+        console.error('Không thể xuất file Word:', err);
       } finally {
         setDownloadingWordType(null);
       }
@@ -220,7 +220,7 @@ export const ProblemStatementView: React.FC<ProblemStatementViewProps> = ({
           includeMistakes: true,
         });
       } catch (err: any) {
-        alert('Không thể xuất file Markdown: ' + err.message);
+        console.error('Không thể xuất file Markdown:', err);
       } finally {
         setTimeout(() => setDownloadingMarkdown(null), 1000);
       }

@@ -222,12 +222,20 @@ export function validateProblemTestCases(problem: ProblemData): TestValidationRe
       }
     }
 
-    // Empty check
+    // Empty check & Execution error check
     if (!test.input || test.input.trim().length === 0) {
       violations.push('Dữ liệu vào (input) bị rỗng.');
     }
     if (!test.output || test.output.trim().length === 0) {
       violations.push('Dữ liệu ra (output) bị rỗng.');
+    }
+    if (test.executionStatus === 'timeout' || (test.output && test.output.startsWith('[Lỗi: TLE'))) {
+      violations.push(test.errorMessage || 'Quá thời gian chạy (TLE > 3.5s) khi thực thi mã nguồn C++.');
+    } else if (
+      test.executionStatus === 'runtime_error' ||
+      (test.output && test.output.startsWith('[Lỗi: Runtime Error'))
+    ) {
+      violations.push(test.errorMessage || 'Lỗi thực thi (Runtime Error) khi chạy mã nguồn C++.');
     }
 
     // Check Subtask bounds
@@ -244,7 +252,13 @@ export function validateProblemTestCases(problem: ProblemData): TestValidationRe
     // Determine status for this test
     let status: 'pass' | 'warning' | 'fail' = 'pass';
     if (violations.length > 0) {
-      status = violations.some((v) => v.includes('rỗng') || v.includes('không khớp'))
+      status = violations.some(
+        (v) =>
+          v.includes('rỗng') ||
+          v.includes('không khớp') ||
+          v.includes('TLE') ||
+          v.includes('Runtime Error')
+      )
         ? 'fail'
         : 'warning';
       violationsCount++;
@@ -378,12 +392,16 @@ export function enrichAndEnforceSubtaskCompliance(problem: ProblemData): Problem
   // Enforce test01 exact matching
   if (tests.length > 0) {
     tests[0].input = (cloned.sampleInput || '').trim();
-    tests[0].output = (cloned.sampleOutput || '').trim();
+    if (tests[0].executionStatus === 'success' && tests[0].output && !tests[0].output.startsWith('[Lỗi:')) {
+      cloned.sampleOutput = tests[0].output.trim();
+    } else {
+      tests[0].output = (cloned.sampleOutput || '').trim();
+    }
     tests[0].isSample = true;
     tests[0].note = 'Test ví dụ trùng khớp 100% đề bài';
   }
 
-  cloned.testCases = tests.map((test, idx) => {
+  cloned.testCases = tests.map((test) => {
     countInCurrent++;
     if (
       countInCurrent > subtaskQuotas[currentQuotaIdx].count &&
@@ -394,13 +412,19 @@ export function enrichAndEnforceSubtaskCompliance(problem: ProblemData): Problem
     }
 
     const quota = subtaskQuotas[currentQuotaIdx];
+    const hasExecFail =
+      test.executionStatus === 'timeout' ||
+      test.executionStatus === 'runtime_error' ||
+      (test.output && test.output.startsWith('[Lỗi:'));
 
     return {
       ...test,
       subtask: quota.subtaskId,
       subtaskConstraint: `${quota.name}: ${quota.condition}`,
-      validationStatus: 'pass',
-      validationMessage: `Đạt chuẩn ràng buộc ${quota.name}`,
+      validationStatus: hasExecFail ? 'fail' : 'pass',
+      validationMessage: hasExecFail
+        ? test.errorMessage || `Lỗi thực thi trên ${quota.name}`
+        : `Đạt chuẩn ràng buộc ${quota.name}`,
     };
   });
 

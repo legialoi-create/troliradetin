@@ -14,7 +14,11 @@ import {
   BookOpen,
 } from 'lucide-react';
 import { ProblemData } from '../types';
-import { generateThemisTestZip, downloadBlob } from '../utils/zipGenerator';
+import {
+  generateThemisTestZip,
+  generateFullExamPackageZip,
+  downloadBlob,
+} from '../utils/zipGenerator';
 import { generateProblemWordBlob } from '../utils/wordGenerator';
 import { downloadProblemMarkdown } from '../utils/markdownGenerator';
 import { WordExportModal } from './WordExportModal';
@@ -22,12 +26,14 @@ import { useAuth } from '../context/AuthContext';
 
 interface ZipPackagingViewProps {
   problem: ProblemData;
+  history?: ProblemData[];
   isDownloading: boolean;
   setIsDownloading: (val: boolean) => void;
 }
 
 export const ZipPackagingView: React.FC<ZipPackagingViewProps> = ({
   problem,
+  history = [],
   isDownloading,
   setIsDownloading,
 }) => {
@@ -40,6 +46,7 @@ export const ZipPackagingView: React.FC<ZipPackagingViewProps> = ({
   const [downloadSuccess, setDownloadSuccess] = useState(false);
   const [isWordModalOpen, setIsWordModalOpen] = useState(false);
   const [downloadingType, setDownloadingType] = useState<string | null>(null);
+  const [isPackagingFullSet, setIsPackagingFullSet] = useState(false);
 
   const tests = problem.testCases || [];
   const codeFormatted =
@@ -48,6 +55,18 @@ export const ZipPackagingView: React.FC<ZipPackagingViewProps> = ({
       : fileCase === 'lowercase'
       ? problem.problemCode.toLowerCase()
       : problem.problemCode;
+
+  // Danh sách các bài toán sẵn sàng đóng gói tổng hợp
+  const examProblems = React.useMemo(() => {
+    const map = new Map<string, ProblemData>();
+    map.set(problem.problemCode, problem);
+    history.forEach((h) => {
+      if (h.problemCode && !map.has(h.problemCode)) {
+        map.set(h.problemCode, h);
+      }
+    });
+    return Array.from(map.values()).slice(0, 6);
+  }, [problem, history]);
 
   const handleDownload = () => {
     requireAuth(async () => {
@@ -63,16 +82,36 @@ export const ZipPackagingView: React.FC<ZipPackagingViewProps> = ({
           fileCase,
         });
 
-        downloadBlob(zipBlob, `${codeFormatted}_TEST_THEMIS.zip`);
+        downloadBlob(zipBlob, `${codeFormatted}_Themis_20Tests.zip`);
         setDownloadSuccess(true);
         setTimeout(() => setDownloadSuccess(false), 4000);
       } catch (err: any) {
         console.error('Error creating ZIP:', err);
-        alert('Không thể tạo file ZIP: ' + err.message);
       } finally {
         setIsDownloading(false);
       }
     }, 'Tải trọn bộ file ZIP chuẩn Themis');
+  };
+
+  // Tải Gói Tổng Hợp Toàn Đề (DeThi_HSG_FullPackage.zip) 1 lần duy nhất
+  const handleDownloadFullPackage = () => {
+    requireAuth(async () => {
+      try {
+        setIsPackagingFullSet(true);
+        setDownloadSuccess(false);
+        const fullBlob = await generateFullExamPackageZip(examProblems, {
+          includeSolution,
+          fileCase,
+        });
+        downloadBlob(fullBlob, 'DeThi_HSG_FullPackage.zip');
+        setDownloadSuccess(true);
+        setTimeout(() => setDownloadSuccess(false), 4000);
+      } catch (err: any) {
+        console.error('Error creating FullPackage ZIP:', err);
+      } finally {
+        setIsPackagingFullSet(false);
+      }
+    }, 'Tải Gói Tổng Hợp Toàn Đề (DeThi_HSG_FullPackage.zip)');
   };
 
   // Tải riêng file Word chỉ chứa đề bài (để in phát học sinh)
@@ -91,14 +130,14 @@ export const ZipPackagingView: React.FC<ZipPackagingViewProps> = ({
         });
         downloadBlob(wordBlob, `${codeFormatted}_DeBai.docx`);
       } catch (err: any) {
-        alert('Không thể xuất file Word đề bài: ' + err.message);
+        console.error('Không thể xuất file Word đề bài:', err);
       } finally {
         setDownloadingType(null);
       }
     }, 'Tải đề bài Word cho học sinh');
   };
 
-  // Tải riêng file Word: Đề, lỗi sai và hướng dẫn giải
+  // Tải riêng file Word: Đề, Báo cáo thẩm định 20 test, lỗi sai và hướng dẫn chấm
   const handleDownloadTeacherWord = () => {
     requireAuth(async () => {
       try {
@@ -108,17 +147,17 @@ export const ZipPackagingView: React.FC<ZipPackagingViewProps> = ({
           includeSolution: true,
           includeExplanation: true,
           includeMistakes: true,
-          includeTestCasesSummary: false,
+          includeTestCasesSummary: true,
           schoolName: 'TỔ TIN HỌC',
-          examTitle: `ĐỀ BÀI, LỖI SAI & HƯỚNG DẪN GIẢI: ${problem.problemName.toUpperCase()} (${problem.problemCode})`,
+          examTitle: `HƯỚNG DẪN CHẤM & BÁO CÁO THẨM ĐỊNH: ${problem.problemName.toUpperCase()} (${problem.problemCode})`,
         });
-        downloadBlob(wordBlob, `${codeFormatted}_HuongDan_LoiSai.docx`);
+        downloadBlob(wordBlob, `${codeFormatted}_HuongDanCham.docx`);
       } catch (err: any) {
-        alert('Không thể xuất file Word hướng dẫn: ' + err.message);
+        console.error('Không thể xuất file Word hướng dẫn:', err);
       } finally {
         setDownloadingType(null);
       }
-    }, 'Tải Word hướng dẫn & lỗi sai cho giáo viên');
+    }, 'Tải Word hướng dẫn chấm & báo cáo thẩm định');
   };
 
   // Tải riêng file Markdown (.md) chuẩn công thức toán LaTeX ($...$)
@@ -138,24 +177,24 @@ export const ZipPackagingView: React.FC<ZipPackagingViewProps> = ({
       {/* Top Banner with Download Button */}
       <div className="bg-white rounded-2xl border border-slate-200 p-6 shadow-xs flex flex-col md:flex-row md:items-center justify-between gap-5">
         <div>
-          <div className="flex items-center gap-2 mb-1.5">
+          <div className="flex items-center gap-2 mb-1.5 flex-wrap">
             <span className="text-xs font-bold text-emerald-800 bg-emerald-50 border border-emerald-200 px-2.5 py-0.5 rounded-full">
-              Sẵn sàng tải về
+              Sẵn sàng tải về 1 lần
             </span>
             <span className="text-xs font-mono text-slate-500">
-              Định dạng: *.zip ({tests.length} tests) & *.docx (Word)
+              Gói đơn: {codeFormatted}_Themis_20Tests.zip • Gói tổng hợp: DeThi_HSG_FullPackage.zip
             </span>
           </div>
           <h2 className="text-xl font-bold text-slate-900">
-            Đóng Gói Trọn Bộ Test Chuẩn Themis ({codeFormatted}.zip)
+            Đóng Gói Trọn Bộ Test Chuẩn Themis &amp; Gói Tổng Hợp Toàn Đề
           </h2>
           <p className="text-xs text-slate-500 mt-1 max-w-2xl leading-relaxed">
-            File ZIP chứa thư mục mang tên bài <strong>{codeFormatted}</strong>, bên trong gồm các thư mục <strong>test01</strong> đến <strong>test{tests.length < 10 ? '0' + tests.length : tests.length}</strong>. Trong mỗi thư mục chứa file <strong>{codeFormatted}.inp</strong> và <strong>{codeFormatted}.out</strong> theo đúng yêu cầu đề bài.
+            Gói ZIP chứa thư mục <strong>{codeFormatted}/test01..test{tests.length < 10 ? '0' + tests.length : tests.length}</strong>, kèm code chuẩn <strong>{codeFormatted}.cpp</strong>, code đối chứng <strong>oracle_bf.cpp</strong>, code tạo test <strong>generator.cpp</strong>, <strong>validator.py</strong>, Đề bài Word và Hướng dẫn chấm Word.
           </p>
         </div>
 
-        <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-2.5 shrink-0">
-          <div className="flex items-center rounded-xl border border-blue-200 bg-blue-50/70 p-1 gap-1">
+        <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-2.5 shrink-0 flex-wrap">
+          <div className="flex items-center rounded-xl border border-blue-200 bg-blue-50/70 p-1 gap-1 flex-wrap">
             <button
               id="btn-download-word-student"
               onClick={handleDownloadStudentWord}
@@ -172,10 +211,10 @@ export const ZipPackagingView: React.FC<ZipPackagingViewProps> = ({
               onClick={handleDownloadTeacherWord}
               disabled={downloadingType !== null}
               className="inline-flex items-center gap-1.5 px-3 py-2 text-xs font-bold text-indigo-700 hover:bg-white hover:shadow-xs rounded-lg transition-all disabled:opacity-50"
-              title="Tải file Word gồm đề bài, các lỗi sai thường gặp và hướng dẫn giải"
+              title="Tải file Word Hướng dẫn chấm kèm Bảng tổng hợp thẩm định 20 test"
             >
               <BookOpen className="w-3.5 h-3.5 text-indigo-600" />
-              <span>{downloadingType === 'teacher' ? 'Đang tạo...' : 'Tải Word (Đề, Lỗi sai & HD)'}</span>
+              <span>{downloadingType === 'teacher' ? 'Đang tạo...' : 'Tải HD Chấm Word'}</span>
             </button>
 
             <button
@@ -203,11 +242,26 @@ export const ZipPackagingView: React.FC<ZipPackagingViewProps> = ({
           <button
             id="btn-download-zip-package"
             onClick={handleDownload}
-            disabled={isDownloading}
-            className="inline-flex items-center justify-center gap-2 px-6 py-3 text-xs sm:text-sm font-bold text-white bg-blue-600 hover:bg-blue-700 active:bg-blue-800 disabled:opacity-50 rounded-xl shadow-md hover:shadow-lg transition-all"
+            disabled={isDownloading || isPackagingFullSet}
+            className="inline-flex items-center justify-center gap-2 px-5 py-3 text-xs sm:text-sm font-bold text-white bg-blue-600 hover:bg-blue-700 active:bg-blue-800 disabled:opacity-50 rounded-xl shadow-md hover:shadow-lg transition-all"
           >
             <Download className="w-4 h-4" />
-            <span>{isDownloading ? 'Đang nén ZIP...' : 'Tải Về File *.ZIP Ngay'}</span>
+            <span>{isDownloading ? 'Đang nén ZIP...' : `Tải Bài ${codeFormatted} (.ZIP)`}</span>
+          </button>
+
+          <button
+            id="btn-download-full-exam-zip"
+            onClick={handleDownloadFullPackage}
+            disabled={isPackagingFullSet || isDownloading}
+            className="inline-flex items-center justify-center gap-2 px-5 py-3 text-xs sm:text-sm font-bold text-white bg-emerald-600 hover:bg-emerald-700 active:bg-emerald-800 disabled:opacity-50 rounded-xl shadow-md hover:shadow-lg transition-all"
+            title="Đóng gói tổng hợp toàn bộ đề thi (các bài đã biên soạn) thành 1 file DeThi_HSG_FullPackage.zip duy nhất"
+          >
+            <FileArchive className="w-4 h-4" />
+            <span>
+              {isPackagingFullSet
+                ? 'Đang đóng gói tổng hợp...'
+                : `Tải Gói Tổng Hợp (${examProblems.length} Bài • FullPackage.zip)`}
+            </span>
           </button>
         </div>
       </div>

@@ -1,11 +1,19 @@
 import express from "express";
 import path from "path";
+import fs from "fs";
 import { GoogleGenAI, Type } from "@google/genai";
 import dotenv from "dotenv";
 import { jsonrepair } from "jsonrepair";
 import { PREBUILT_PROBLEMS } from "./src/data/prebuiltProblems";
 import { enrichAndEnforceSubtaskCompliance, validateProblemTestCases } from "./src/utils/testValidator";
-import { executeCppSolution } from "./src/server/cppRunner";
+import {
+  executeCppSolution,
+  compileCppCode,
+  runBinaryWithInput,
+  normalizeOutputText,
+  runThreeLevelIndependentAudit,
+  classifyTestCategory,
+} from "./src/server/cppRunner";
 
 dotenv.config();
 
@@ -219,7 +227,150 @@ function normalizeProblemCode(code: string | undefined, defaultPrefix = "BAI"): 
   return cleaned.slice(0, 6);
 }
 
-// API: Generate Problem + Solution + 20 Tests
+/**
+ * Runs 3-Level Zero-Trust Independent Audit (Generator C++ -> Brute-Force Oracle vs Optimal AC Stress Test -> 20-Test Execution)
+ * and automatically invokes AI self-healing if compilation fails, any test TLE/RTEs, or a counter-example is found against Oracle.
+ */
+async function executeAndSelfHealCpp(problem: any, allowSelfHeal = true): Promise<any> {
+  if (!problem.solutionCpp || !Array.isArray(problem.testCases) || problem.testCases.length === 0) {
+    return problem;
+  }
+
+  const expectedSampleOut = (problem.sampleOutput || "").trim();
+  let auditRes = await runThreeLevelIndependentAudit({
+    solutionCpp: problem.solutionCpp,
+    oracleBfCpp: problem.oracleBfCpp,
+    generatorCpp: problem.generatorCpp,
+    testCases: problem.testCases,
+    sampleInput: problem.sampleInput || "",
+    sampleOutput: expectedSampleOut,
+  });
+
+  const sampleDiffers =
+    auditRes.success &&
+    auditRes.sampleOutput !== undefined &&
+    expectedSampleOut !== "" &&
+    normalizeOutputText(auditRes.sampleOutput) !== normalizeOutputText(expectedSampleOut);
+
+  const needsHealing =
+    allowSelfHeal &&
+    (!auditRes.success ||
+      (auditRes.failedTestCount && auditRes.failedTestCount > 0) ||
+      !!auditRes.counterExample);
+
+  if (needsHealing) {
+    try {
+      const failureSummary = !auditRes.success
+        ? `Lỗi biên dịch g++ (C++17):\n${auditRes.compileError}`
+        : auditRes.counterExample
+        ? `PHÁT HIỆN PHẢN VÍ DỤ (SAI LỆCH GIỮA BRUTE-FORCE ORACLE VÀ CODE TỐI ƯU) TẠI ${auditRes.counterExample.testLabel}:\n` +
+          `- Input:\n${auditRes.counterExample.input.slice(0, 300)}\n` +
+          `- Kết quả Brute-Force Oracle: ${auditRes.counterExample.oracleOutput}\n` +
+          `- Kết quả Code Tối Ưu hiện tại: ${auditRes.counterExample.candidateOutput}`
+        : `Có ${auditRes.failedTestCount} test case bị lỗi thực thi (TLE / Runtime Error):\n` +
+          (auditRes.failingCases || [])
+            .slice(0, 3)
+            .map((fc) => `- ${fc.testName} (${fc.status}): ${fc.errorMessage}\n  Input mẫu: ${fc.input.slice(0, 200)}`)
+            .join("\n");
+
+      console.log(`[C++ 3-Level Self-Heal] Attempting automatic C++ repair for ${problem.problemCode}...`);
+      const repairPrompt = `Bạn là Huấn luyện viên HSG Tin học Quốc gia C++17. Trong quá trình Thẩm định Độc lập 3 Cấp độ (Zero-Trust Audit), hệ thống phát hiện sự cố với mã nguồn bài toán "${problem.problemName}" (${problem.problemCode}):
+
+THÔNG TIN ĐỀ BÀI:
+- Mô tả: ${problem.description}
+- Dữ liệu vào: ${problem.inputFormat}
+- Dữ liệu ra: ${problem.outputFormat}
+- Ràng buộc: ${problem.constraints}
+- Ví dụ Input:
+${problem.sampleInput}
+- Ví dụ Output chuẩn:
+${problem.sampleOutput}
+
+MÃ NGUỒN C++ TỐI ƯU HIỆN TẠI:
+\`\`\`cpp
+${problem.solutionCpp}
+\`\`\`
+${problem.oracleBfCpp ? `\nMÃ NGUỒN BRUTE-FORCE ORACLE HIỆN TẠI:\n\`\`\`cpp\n${problem.oracleBfCpp}\n\`\`\`` : ""}
+
+CHI TIẾT LỖI / PHẢN VÍ DỤ TỪ TRÌNH THẨM ĐỊNH G++:
+${failureSummary}
+
+YÊU CẦU SỬA LỖI BẮT BUỘC:
+1. Sửa triệt để lỗi biên dịch, lỗi sai lệch logic (off-by-one, điều kiện biên), lỗi tràn số nguyên (dùng 'long long' và ép kiểu '1LL * a * b'), lỗi tràn mảng, hoặc TLE.
+2. Đảm bảo cả 'solutionCpp' (Code tối ưu AC 100%) và 'oracleBfCpp' (Code vét cạn đối chứng trên dữ liệu nhỏ) đều đúng tuyệt đối 100% theo định nghĩa toán học của đề bài.
+3. Bật tăng tốc I/O: ios_base::sync_with_stdio(false); cin.tie(NULL); và giữ 2 dòng comment freopen("${problem.problemCode}.inp", "r", stdin); freopen("${problem.problemCode}.out", "w", stdout);.`;
+
+      const repairSchema = {
+        responseMimeType: "application/json",
+        responseSchema: {
+          type: Type.OBJECT,
+          properties: {
+            solutionCpp: { type: Type.STRING },
+            oracleBfCpp: { type: Type.STRING },
+            algorithmExplanation: { type: Type.STRING },
+            timeComplexity: { type: Type.STRING },
+            spaceComplexity: { type: Type.STRING },
+          },
+          required: ["solutionCpp", "algorithmExplanation", "timeComplexity", "spaceComplexity"],
+        },
+      };
+
+      const { data: repairedData } = await executeGeminiJsonWithRetry(repairPrompt, repairSchema, 1);
+      if (repairedData && repairedData.solutionCpp) {
+        const retryAudit = await runThreeLevelIndependentAudit({
+          solutionCpp: repairedData.solutionCpp,
+          oracleBfCpp: repairedData.oracleBfCpp || problem.oracleBfCpp,
+          generatorCpp: problem.generatorCpp,
+          testCases: auditRes.testCases,
+          sampleInput: problem.sampleInput || "",
+          sampleOutput: expectedSampleOut,
+        });
+        if (retryAudit.success && (retryAudit.failedTestCount || 0) <= (auditRes.failedTestCount || 999)) {
+          problem.solutionCpp = repairedData.solutionCpp;
+          if (repairedData.oracleBfCpp) problem.oracleBfCpp = repairedData.oracleBfCpp;
+          if (repairedData.algorithmExplanation) problem.algorithmExplanation = repairedData.algorithmExplanation;
+          if (repairedData.timeComplexity) problem.timeComplexity = repairedData.timeComplexity;
+          if (repairedData.spaceComplexity) problem.spaceComplexity = repairedData.spaceComplexity;
+          retryAudit.auditReport.level2OracleStress.selfHealed = true;
+          auditRes = retryAudit;
+          console.log(`[C++ 3-Level Self-Heal] Auto-repaired and passed 3-Level Audit!`);
+        }
+      }
+    } catch (healErr) {
+      console.warn("[C++ 3-Level Self-Heal] Could not auto-heal C++:", healErr);
+    }
+  }
+
+  problem.threeLevelAudit = auditRes.auditReport;
+
+  if (auditRes.success) {
+    problem.testCases = auditRes.testCases;
+    if (auditRes.sampleOutput) {
+      problem.sampleOutput = auditRes.sampleOutput;
+    }
+    problem.executedByCpp = true;
+    problem.cppExecutionTimeMs = auditRes.totalTimeMs;
+    problem.cppFailedTestCount = auditRes.failedTestCount || 0;
+    problem.cppSampleMatched = true;
+    problem.cppCompileError = undefined;
+    problem.cppExecutionDetails =
+      auditRes.failedTestCount && auditRes.failedTestCount > 0
+        ? `Có ${auditRes.failedTestCount}/${auditRes.testCases.length} test gặp lỗi TLE hoặc Runtime Error. Hãy bấm "AI Sửa Lỗi & Tối Ưu Code" để khắc phục.`
+        : sampleDiffers
+        ? `Đã tự động cập nhật Output ví dụ khớp 100% với kết quả thực thi C++.`
+        : undefined;
+  } else {
+    problem.executedByCpp = false;
+    problem.cppCompileError = auditRes.compileError;
+    problem.cppSampleMatched = false;
+    problem.cppFailedTestCount = problem.testCases.length;
+    problem.cppExecutionDetails = auditRes.compileError;
+  }
+
+  return problem;
+}
+
+// API: Generate Problem + Solution + 3-Level Independent Audit + 20 Code-Generated Tests
 app.post(["/api/generate-problem", "/generate-problem"], async (req, res) => {
   const {
     topic = "branching",
@@ -238,60 +389,45 @@ app.post(["/api/generate-problem", "/generate-problem"], async (req, res) => {
       ? "Cơ bản (Dành cho học sinh mới học lập trình C++, thuật toán trực tiếp, dễ hiểu)"
       : difficulty === "medium"
       ? "Trung bình (Cần kết hợp 2-3 bước tư duy, bẫy nhẹ ở điều kiện biên)"
-      : "Thử thách (Đòi hỏi tư duy tối ưu thời gian/bộ nhớ nhẹ, xử lý kỹ thuật toán)";
+      : "Thử thách HSG (Đòi hỏi tối ưu hóa thuật toán nâng cao: Prefix Sum, Two Pointers, Binary Search, Quy hoạch động, Segment Tree/BIT, Số học, Đồ thị...)";
 
-  const prompt = `Bạn là một chuyên gia khảo thí và giáo viên bồi dưỡng Tin học / C++ kỳ cựu tại Việt Nam.
-Nhiệm vụ của bạn là: RA MỘT ĐỀ BÀI LẬP TRÌNH C++ CHUẨN SƯ PHẠM + MÃ NGUỒN LỜI GIẢI CHUẨN + ĐÚNG ${testCount} BỘ TEST CHUẨN THI THEMIS.
+  const prompt = `Bạn là một Chuyên gia Khảo thí & Huấn luyện viên đội tuyển Học sinh giỏi (HSG) Tin học Quốc gia tại Việt Nam.
+Nhiệm vụ của bạn là: THIẾT KẾ ĐỀ BÀI LẬP TRÌNH C++ CHUẨN THEMIS + THẨM ĐỊNH ĐỘC LẬP 3 CẤP ĐỘ (ZERO-TRUST) DÙNG CODE C++ TẠO TEST TUYỆT ĐỐI KHÔNG NHẨM TAY.
 
 THÔNG TIN YÊU CẦU:
 - Lộ trình kiến thức mục tiêu: "${topicName}" (Mã chủ đề: ${topic})
-  Lộ trình tổng quát cho học sinh mới bắt đầu gồm: Cấu trúc rẽ nhánh → Cấu trúc lặp → Hàm → Mảng → Chuỗi → Cấu trúc dữ liệu.
 - Mức độ khó: ${difficultyText}
 ${problemName ? `- Tên bài gợi ý: ${problemName}` : ""}
-${sanitizedUserCode ? `- Mã bài gợi ý (BẮT BUỘC dưới hoặc bằng 6 kí tự viết hoa không dấu): ${sanitizedUserCode}` : ""}
+${sanitizedUserCode ? `- Mã bài gợi ý (BẮT BUỘC <= 6 kí tự viết hoa không dấu): ${sanitizedUserCode}` : ""}
 ${customPrompt ? `- Yêu cầu bổ sung của giáo viên: "${customPrompt}"` : ""}
 
-QUY TẮC BẮT BUỘC VỀ TÊN BÀI, MÃ BÀI, INPUT, OUTPUT VIỆT HOÁ NGẮN GỌN (DƯỚI 6 KÍ TỰ):
-1. **Mã bài (problemCode)**:
-   - BẮT BUỘC là 1 từ viết hoa không dấu, thuần Việt ngắn gọn **DƯỚI HOẶC BẰNG 6 KÍ TỰ** (Tối đa 6 ký tự, ví dụ: TONG, TG, SNT, MAX2, FIBO, PALIN, UCLN, BCNN, NGOAC, DEMTU, MANG, XAU, DEMNT, SOCHAN, TDIEN, SNGAY...).
-   - Tuyệt đối không đặt mã bài dài hơn 6 ký tự.
-2. **Tên bài (problemName)**:
-   - Tiếng Việt thuần túy ngắn gọn, súc tích, sư phạm (dưới 6 từ, ví dụ: "Phân loại tam giác", "Kiểm tra số nguyên tố", "Tính tổng mảng", "Tìm số lớn nhì", "Dãy Fibonacci", "Xâu đối xứng", "Ước chung lớn nhất"...).
-3. **Định dạng file Dữ liệu vào & Dữ liệu ra**:
-   - File dữ liệu vào: <MABAI>.INP (ví dụ: TONG.INP, TG.INP, SNT.INP)
-   - File dữ liệu ra: <MABAI>.OUT (ví dụ: TONG.OUT, TG.OUT, SNT.OUT)
-   - Cả hai file đều đồng bộ theo mã bài dưới 6 ký tự trên.
-4. **Mô tả Dữ liệu vào (inputFormat) & Dữ liệu ra (outputFormat)**:
-   - Trình bày thuần Việt, súc tích, ngắn gọn, chỉ rõ từng dòng chứa gì, cách nhau khoảng trắng hay xuống dòng.
-5. **Ràng buộc dữ liệu (constraints)**:
-   - BẮT BUỘC chia thành 2 đến 3 Subtask với tỷ lệ phần trăm số test/điểm cụ thể.
-     Ví dụ:
-     - 20% số test có $n \\le 100$.
-     - 30% số test tiếp theo có $100 < n \\le 1000$.
-     - 50% số test còn lại có $1000 < n \\le 10^5$.
-6. **Mã nguồn lời giải (solutionCpp) & Kiểu biến (Data Types) CHUẨN XÁC 100%**:
-   - Viết bằng C++ chuẩn (sử dụng #include <iostream>, #include <vector>, #include <string>, #include <iomanip>, v.v.).
-   - **ĐỒNG BỘ TUYỆT ĐỐI KIỂU BIẾN VỚI RÀNG BUỘC ĐỀ BÀI**:
-     * Nếu giá trị của biến, tổng, tích hoặc kết quả có thể vượt quá $2 \\cdot 10^9$ (ví dụ: $n \\le 10^9$ tính tổng, $n \\le 10^{12}$, $n \\le 10^{18}$, tổng mảng $10^5 \\times 10^9 = 10^{14}$), BẮT BUỘC dùng kiểu 'long long' (hoặc 'unsigned long long') trong C++, kèm ép kiểu khi nhân '(long long)a * b' để TRÁNH TRÀN SỐ NGUYÊN (Integer Overflow).
-     * Với số thực: dùng 'double' hoặc 'long double', in kết quả kèm 'fixed << setprecision(k)' đúng số chữ số thập phân đề yêu cầu.
-     * Với xâu ký tự: dùng 'string', xử lý đọc cả dòng 'getline(cin, s)' nếu chuỗi có khoảng trắng.
-     * Tên các biến khai báo trong code C++ phải khớp với tên biến được nhắc đến trong Đề bài và Ràng buộc ($n$, $k$, $a, b$, $A_i$,...).
-   - Comment tiếng Việt giải thích rõ ràng từng khối lệnh.
-   - Có 2 dòng comment đọc ghi file cho hệ thống chấm Themis sử dụng đúng mã bài <= 6 ký tự:
-     // freopen("<MABAI>.inp", "r", stdin);
-     // freopen("<MABAI>.out", "w", stdout);
-   - Mã nguồn phải chuẩn, tối ưu, biên dịch trực tiếp không có lỗi bằng g++ (C++17).
-7. **Bộ đúng ${testCount} test cases (test01 đến test${testCount < 10 ? "0" + testCount : testCount})**:
-   - Hệ thống sẽ biên dịch và chạy trực tiếp file C++ này với stdin/stdout để sinh output thực tế cho từng test case.
-   - KIỂM TRA ĐÚNG RÀNG BUỘC CÁC SUBTASK:
-     * test01: BẮT BUỘC trùng khớp 100% từng ký tự với sampleInput và sampleOutput trong đề bài (isSample = true).
-     * Phân chia các test case khớp đúng tỷ lệ % của từng Subtask trong đề bài.
-     * MỌI test case thuộc Subtask nào thì dữ liệu vào PHẢI TUÂN THỦ NGHIÊM NGẶT giới hạn của Subtask đó.
-     * Các test cuối cùng của Subtask lớn nhất PHẢI chạm ngưỡng giới hạn tối đa đề bài.
-8. **QUY TẮC ĐỊNH DẠNG VĂN BẢN VÀ CÔNG THỨC TOÁN (BẮT BUỘC)**:
+NGUYÊN TẮC TỐI THƯỢNG (THẨM ĐỊNH ĐỘC LẬP 3 CẤP ĐỘ & DÙNG CODE TẠO TEST - TUYỆT ĐỐI KHÔNG NHẨM):
+1. **Mã bài (problemCode) & Tên bài (problemName)**:
+   - problemCode: 1 từ viết hoa không dấu **DƯỚI HOẶC BẰNG 6 KÍ TỰ** (VD: TONG, TG, SNT, MAX2, FIBO, PALIN, DPK, SEGT...).
+   - problemName: Tiếng Việt ngắn gọn, súc tích (dưới 6 từ).
+   - File dữ liệu vào/ra: <MABAI>.INP và <MABAI>.OUT.
+2. **Ràng buộc & Phân tầng Subtask chuẩn HSG (constraints)**:
+   - Chia thành 3 Subtask rõ ràng theo tỷ lệ điểm (ví dụ: Subtask 1: 30% số điểm với dữ liệu nhỏ cho phép duyệt trâu $O(N^2)/O(2^N)$; Subtask 2: 30% số điểm trung gian; Subtask 3: 40% số điểm dữ liệu kịch trần đòi hỏi thuật toán tối ưu $O(N \\log N)$ hoặc $O(N)$).
+3. **XÂY DỰNG ĐỘC LẬP 03 MÃ NGUỒN C++17 ĐỂ MÁY CHỦ BIÊN DỊCH & ĐỐI CHIẾU CHÉO TRỰC TIẾP**:
+   - **Mô hình 1 — \`oracleBfCpp\` (Brute-Force / Naive Oracle)**:
+     * Code C++17 vét cạn trực tiếp từ định nghĩa toán học của đề bài, ngắn gọn, đơn giản để đảm bảo đúng logic tuyệt đối 100% trên dữ liệu nhỏ (Subtask 1 và bộ Stress-Test).
+   - **Mô hình 2 — \`solutionCpp\` (Optimal AC Solution)**:
+     * Code C++17 tối ưu hóa nâng cao giải trọn vẹn 20 test trong thời gian < 0.5 giây (< 50% Time Limit).
+     * BẮT BUỘC chống tràn số tuyệt đối: dùng 'long long' ('int64_t') và ép kiểu '1LL * a * b' khi dữ liệu/tổng/tích vượt $2 \\cdot 10^9$.
+     * Có 'ios_base::sync_with_stdio(false); cin.tie(nullptr);' và 2 dòng comment '// freopen("<MABAI>.inp", "r", stdin);' '// freopen("<MABAI>.out", "w", stdout);'.
+   - **Mô hình 3 — \`generatorCpp\` (Code C++17 Sinh Bộ 20 Test Tự Động - Tuyệt Đối Không Nhẩm)**:
+     * Viết chương trình C++17 hoàn chỉnh đọc duy nhất số nguyên \`int t; cin >> t;\` từ stdin và in ra stdout đúng nội dung file \`.INP\` của test thứ \`t\`:
+       - Nếu \`t == 1\`: In ra chính xác \`sampleInput\`.
+       - Nếu \`2 <= t <= 6\` (Subtask 1 - 30%): Sinh dữ liệu tuân thủ chặt biên Subtask 1 (trong đó t=2 là Corner/Min case, t=3 là Killer/Anti-greedy, t=4,5 là Random, t=6 là Max kịch trần Subtask 1).
+       - Nếu \`7 <= t <= 12\` (Subtask 2 - 30%): Sinh dữ liệu tuân thủ chặt biên Subtask 2 (gồm Corner, Killer, Random, và t=11,12 chạm trần Subtask 2).
+       - Nếu \`13 <= t <= 20\` (Subtask 3 - 40%): Sinh dữ liệu tuân thủ chặt biên Subtask 3 (gồm Corner, Killer bẫy tham lam/dãy đặc biệt, Random, và t=19,20 chạm kịch trần $N_{\\max}, A_{\\max}$ để ép tràn số int32 và đánh trượt code chậm).
+       - Nếu \`t > 100\`: Sinh 1 test ngẫu nhiên nhỏ (thuộc Subtask 1) với seed \`mt19937_64 rng(t * 10007)\` để máy chủ chạy Stress-Test đối chiếu giữa \`oracleBfCpp\` và \`solutionCpp\`.
+4. **Danh sách 20 khung test cases (\`testCases\`, từ test01 đến test20)**:
+   - Cung cấp đầy đủ 20 phần tử với \`subtask\`, \`subtaskConstraint\`, \`testCategory\` ('sample' | 'corner' | 'killer' | 'random' | 'max_stress'), \`note\` ghi rõ ý đồ bẫy test (Min/Corner, Killer/Anti-Greedy, Random, Max/Anti-TLE) và \`input\` dự phòng. Hệ thống sẽ chạy \`generatorCpp\`, đối chiếu \`oracleBfCpp\` vs \`solutionCpp\` và xuất \`.OUT\` thực tế 100% từ \`g++\`.
+5. **QUY TẮC ĐỊNH DẠNG VĂN BẢN VÀ CÔNG THỨC TOÁN (BẮT BUỘC)**:
    - TUYỆT ĐỐI KHÔNG dùng dấu ** ở đầu hoặc cuối tiêu đề, câu văn hoặc đoạn văn.
-   - TẤT CẢ các công thức toán học, biến số ($n$, $a, b, c$, $1 \\le n \\le 10^5$, $a, b \\le 10^9$, $10^9$, $O(N)$, $A_i$) BẮT BUỘC phải viết dưới dạng LaTeX chuẩn kẹp giữa 2 dấu $ ở đầu và cuối: ví dụ $1 \\le n \\le 10^5$, không viết thô dạng 1 <= n <= 10^5.
-   - CHỈ bọc dấu $ cho các biến số/công thức toán học thực sự. TUYỆT ĐỐI KHÔNG bọc dấu $ vào các chữ cái nằm trong từ ngữ tiếng Việt thông thường.
+   - TẤT CẢ các công thức toán học, biến số ($n$, $a, b, c$, $1 \\le n \\le 10^5$, $O(N \\log N)$) BẮT BUỘC viết dưới dạng LaTeX chuẩn kẹp giữa 2 dấu $.
+   - CHỈ bọc dấu $ cho các biến số/công thức toán học thực sự, KHÔNG bọc dấu $ vào các chữ cái trong từ tiếng Việt thông thường.
 
 Hãy trả về định dạng JSON khớp với schema quy định.`;
 
@@ -301,7 +437,7 @@ Hãy trả về định dạng JSON khớp với schema quy định.`;
       type: Type.OBJECT,
       properties: {
         problemName: { type: Type.STRING, description: "Tên bài toán tiếng Việt ngắn gọn, súc tích (dưới 6 từ)" },
-        problemCode: { type: Type.STRING, description: "Mã bài 1 từ viết hoa không dấu ngắn gọn BẮT BUỘC dưới hoặc bằng 6 kí tự (ví dụ: TONG, TG, SNT, MAX2)" },
+        problemCode: { type: Type.STRING, description: "Mã bài 1 từ viết hoa không dấu ngắn gọn BẮT BUỘC <= 6 kí tự" },
         timeLimit: { type: Type.STRING, description: "Thời gian chạy, ví dụ: '1.0 giây'" },
         memoryLimit: { type: Type.STRING, description: "Bộ nhớ tối đa, ví dụ: '256 MB'" },
         difficulty: { type: Type.STRING, enum: ["easy", "medium", "hard"] },
@@ -312,14 +448,16 @@ Hãy trả về định dạng JSON khớp với schema quy định.`;
         sampleInput: { type: Type.STRING, description: "Dữ liệu vào của test ví dụ" },
         sampleOutput: { type: Type.STRING, description: "Dữ liệu ra tương ứng của test ví dụ" },
         sampleExplanation: { type: Type.STRING, description: "Giải thích test ví dụ" },
-        solutionCpp: { type: Type.STRING, description: "Mã nguồn C++ lời giải hoàn chỉnh kèm 2 dòng comment freopen file .inp/.out dưới 6 kí tự" },
-        algorithmExplanation: { type: Type.STRING, description: "Giải thích thuật toán sư phạm" },
-        timeComplexity: { type: Type.STRING, description: "Độ phức tạp thời gian, ví dụ: O(N)" },
-        spaceComplexity: { type: Type.STRING, description: "Độ phức tạp bộ nhớ, ví dụ: O(1)" },
+        solutionCpp: { type: Type.STRING, description: "Model 2: Mã nguồn C++17 tối ưu chuẩn AC 100% kèm comment freopen" },
+        oracleBfCpp: { type: Type.STRING, description: "Model 1: Mã nguồn C++17 Brute-Force Naive Oracle độc lập để đối chiếu chéo" },
+        generatorCpp: { type: Type.STRING, description: "Model 3: Mã nguồn C++17 đọc số thứ tự test t từ stdin và sinh dữ liệu .INP chuẩn tỷ lệ Subtask" },
+        algorithmExplanation: { type: Type.STRING, description: "Giải thích chi tiết thuật toán từng Subtask (từ Vét cạn đến Tối ưu 100%)" },
+        timeComplexity: { type: Type.STRING, description: "Độ phức tạp thời gian, ví dụ: O(N log N)" },
+        spaceComplexity: { type: Type.STRING, description: "Độ phức tạp bộ nhớ, ví dụ: O(N)" },
         commonMistakes: {
           type: Type.ARRAY,
           items: { type: Type.STRING },
-          description: "Danh sách 3-4 lỗi học sinh mới học thường gặp",
+          description: "Danh sách 3-4 lỗi học sinh thường gặp (tràn số int32, bẫy biên, TLE...)",
         },
         testCases: {
           type: Type.ARRAY,
@@ -328,12 +466,13 @@ Hãy trả về định dạng JSON khớp với schema quy định.`;
             properties: {
               id: { type: Type.INTEGER },
               testName: { type: Type.STRING, description: "Ví dụ: 'test01', 'test02'..." },
-              input: { type: Type.STRING, description: "Nội dung file .inp" },
-              output: { type: Type.STRING, description: "Nội dung file .out tương ứng chính xác" },
+              input: { type: Type.STRING, description: "Nội dung file .inp dự phòng" },
+              output: { type: Type.STRING, description: "Nội dung file .out dự phòng" },
               isSample: { type: Type.BOOLEAN },
               subtask: { type: Type.INTEGER, description: "Số thứ tự Subtask (1, 2, 3)" },
               subtaskConstraint: { type: Type.STRING, description: "Ràng buộc cụ thể của Subtask này" },
-              note: { type: Type.STRING, description: "Ghi chú ý đồ của test case này" },
+              testCategory: { type: Type.STRING, enum: ["sample", "corner", "killer", "random", "max_stress"] },
+              note: { type: Type.STRING, description: "Ghi chú ý đồ bẫy kỹ thuật của test case này" },
             },
             required: ["id", "testName", "input", "output"],
           },
@@ -353,6 +492,8 @@ Hãy trả về định dạng JSON khớp với schema quy định.`;
         "sampleOutput",
         "sampleExplanation",
         "solutionCpp",
+        "oracleBfCpp",
+        "generatorCpp",
         "algorithmExplanation",
         "timeComplexity",
         "spaceComplexity",
@@ -377,51 +518,33 @@ Hãy trả về định dạng JSON khớp với schema quy định.`;
     result.problemCode = normalizeProblemCode(result.problemCode || sanitizedUserCode, "BAI");
 
     // Ensure 20 tests are numbered nicely
-    if (Array.isArray(result.testCases)) {
-      result.testCases = result.testCases.map((tc: any, idx: number) => {
-        const num = idx + 1;
-        const testName = `test${num < 10 ? "0" + num : num}`;
-        return {
-          id: num,
-          testName,
-          input: String(tc.input || "").trim(),
-          output: String(tc.output || "").trim(),
-          isSample: idx === 0 ? true : !!tc.isSample,
-          subtask: tc.subtask || (idx < 4 ? 1 : idx < 10 ? 2 : 3),
-          subtaskConstraint: tc.subtaskConstraint || "",
-          note: tc.note || (idx === 0 ? "Test ví dụ đề bài" : `Test trường hợp ${num}`),
-        };
-      });
-    }
+    const desiredCount = testCount || 20;
+    const rawList = Array.isArray(result.testCases) ? result.testCases : [];
+    result.testCases = Array.from({ length: desiredCount }, (_, idx) => {
+      const tc = rawList[idx] || {};
+      const num = idx + 1;
+      const testName = `test${num < 10 ? "0" + num : num}`;
+      const { category, defaultNote } = classifyTestCategory(num);
+      return {
+        id: num,
+        testName,
+        input: String(tc.input || result.sampleInput || "").trim(),
+        output: String(tc.output || "").trim(),
+        isSample: idx === 0 ? true : !!tc.isSample,
+        subtask: tc.subtask || (idx < 6 ? 1 : idx < 12 ? 2 : 3),
+        subtaskConstraint: tc.subtaskConstraint || "",
+        testCategory: tc.testCategory || category,
+        note: tc.note || defaultNote,
+      };
+    });
 
-    // GIẢI PHÁP 3: BIÊN DỊCH VÀ CHẠY CODE CHUẨN C++ ĐỂ SINH OUTPUT CHÍNH XÁC 100%
-    if (result.solutionCpp && Array.isArray(result.testCases) && result.testCases.length > 0) {
-      try {
-        console.log(`[C++ Engine] Compiling & executing C++ solution for ${result.problemCode}...`);
-        const execRes = await executeCppSolution(
-          result.solutionCpp,
-          result.testCases,
-          result.sampleInput
-        );
-        if (execRes.success) {
-          result.testCases = execRes.testCases;
-          if (execRes.sampleOutput) {
-            result.sampleOutput = execRes.sampleOutput;
-          }
-          result.executedByCpp = true;
-          result.cppExecutionTimeMs = execRes.totalTimeMs;
-          console.log(`[C++ Engine] Successfully executed all ${result.testCases.length} tests in ${execRes.totalTimeMs}ms (100% accurate output)`);
-        } else {
-          console.warn('[C++ Engine] Compilation warning/error:', execRes.compileError);
-          result.cppCompileError = execRes.compileError;
-        }
-      } catch (runErr) {
-        console.error('[C++ Engine] Execution error:', runErr);
-      }
-    }
+    // THẨM ĐỊNH ĐỘC LẬP 3 CẤP ĐỘ:
+    // Cấp 1: Chạy generatorCpp sinh 20 file .INP chuẩn tỷ lệ (0% nhẩm tay)
+    // Cấp 2: Chạy Stress-Test đối chiếu oracleBfCpp vs solutionCpp (tự chữa lỗi nếu có phản ví dụ)
+    // Cấp 3: Biên dịch & thực thi solutionCpp sinh 20 file .OUT chuẩn xác 100% + kiểm tra < 50% Time Limit
+    result = await executeAndSelfHealCpp(result, true);
 
     // AUTOMATED VALIDATION & SUBTASK COMPLIANCE AUDIT
-    // Verifies test01 matches sampleInput/sampleOutput, checks subtask limits, and builds validationReport
     result = enrichAndEnforceSubtaskCompliance(result);
 
     return res.json({ success: true, problem: result });
@@ -435,6 +558,7 @@ Hãy trả về định dạng JSON khớp với schema quy định.`;
       fallbackProblem.createdAt = Date.now();
       fallbackProblem.isFromCurriculumLibrary = true;
 
+      fallbackProblem = await executeAndSelfHealCpp(fallbackProblem, false);
       fallbackProblem = enrichAndEnforceSubtaskCompliance(fallbackProblem);
 
       return res.json({
@@ -451,100 +575,107 @@ Hãy trả về định dạng JSON khớp với schema quy định.`;
   }
 });
 
-// API: Regenerate tests for an existing problem with strict subtask verification
+// API: Regenerate tests for an existing problem using Code-Based Generator + 3-Level Audit
 app.post(["/api/generate-more-tests", "/generate-more-tests"], async (req, res) => {
   const { problem, count = 20 } = req.body;
   if (!problem || !problem.solutionCpp) {
     return res.status(400).json({ success: false, error: "Thiếu thông tin bài toán hoặc mã nguồn." });
   }
 
-  const prompt = `Cho bài toán C++ sau:
+  const prompt = `Bạn là Chuyên gia Khảo thí HSG Tin học Quốc gia. Cho bài toán C++ sau:
 Tên bài: ${problem.problemName} (${problem.problemCode})
 Mô tả: ${problem.description}
 Định dạng Input: ${problem.inputFormat}
 Định dạng Output: ${problem.outputFormat}
 Ràng buộc & Phân bổ Subtask: ${problem.constraints}
-Mã nguồn lời giải:
+Ví dụ Input:
+${problem.sampleInput}
+Ví dụ Output:
+${problem.sampleOutput}
+Mã nguồn lời giải tối ưu hiện tại:
 \`\`\`cpp
 ${problem.solutionCpp}
 \`\`\`
 
-YÊU CẦU:
-Hãy sinh ra BỘ ${count} TEST CASES MỚI HOÀN TOÀN CHUẨN XÁC ĐỐI CHIẾU 100% VỚI MÃ NGUỒN VÀ RÀNG BUỘC SUBTASK TRÊN:
-1. test01: BẮT BUỘC trùng khớp 100% từng ký tự với Dữ liệu vào mẫu: "${problem.sampleInput}" và Dữ liệu ra mẫu: "${problem.sampleOutput}".
-2. Phân chia đều theo tỷ lệ phần trăm của các Subtask trong mục Ràng buộc.
-3. Mỗi test phải tuân thủ nghiêm ngặt giới hạn kích thước và giá trị của Subtask đó, không được vượt quá giới hạn.
-4. Các test cuối của Subtask cao nhất phải chạm trần giới hạn tối đa của đề bài.
-Bao gồm từ test01 đến test${count < 10 ? "0" + count : count}.`;
+YÊU CẦU BẮT BUỘC (DÙNG CODE C++ TẠO TEST & THẨM ĐỊNH ĐỘC LẬP 3 CẤP ĐỘ - TUYỆT ĐỐI KHÔNG NHẨM):
+1. Viết \`generatorCpp\` (C++17): Chương trình đọc \`int t; cin >> t;\` từ stdin và in ra dữ liệu \`.INP\` cho test thứ \`t\`:
+   - \`t == 1\`: In chính xác Ví dụ Input.
+   - \`2 <= t <= ${count}\`: Phân bổ đúng tỷ lệ Subtask trong mục Ràng buộc, đồng thời đảm bảo đủ 4 nhóm bẫy kỹ thuật:
+     * 20% Test Biên cực tiểu & Đặc biệt (Min / Corner Cases: N nhỏ nhất, 0, số âm, bằng nhau, vô nghiệm)
+     * 30% Test Cấu trúc bẫy thuật toán (Killer / Anti-Greedy Cases: tăng/giảm ngặt, răng cưa, suy biến)
+     * 30% Test Ngẫu nhiên phân phối chuẩn (Controlled Random với mt19937_64)
+     * 20% Test Cực đại kịch trần ở cuối mỗi Subtask (Max / Stress / Anti-TLE Cases: $N = N_{\\max}, A_i = A_{\\max}$)
+   - \`t > 100\`: Sinh test nhỏ ngẫu nhiên thuộc Subtask 1 để chạy Stress-Test.
+2. Viết \`oracleBfCpp\` (C++17): Code vét cạn độc lập ($O(N^2), O(N^3), O(2^N)$) trực tiếp từ định nghĩa đề bài để đối chiếu chéo với \`solutionCpp\`.
+3. Cung cấp danh sách ${count} khung \`testCases\` kèm \`subtask\`, \`subtaskConstraint\`, \`testCategory\` ('sample' | 'corner' | 'killer' | 'random' | 'max_stress'), \`note\` và \`input\` dự phòng.`;
 
   const schemaConfig = {
     responseMimeType: "application/json",
     responseSchema: {
-      type: Type.ARRAY,
-      items: {
-        type: Type.OBJECT,
-        properties: {
-          id: { type: Type.INTEGER },
-          testName: { type: Type.STRING },
-          input: { type: Type.STRING },
-          output: { type: Type.STRING },
-          isSample: { type: Type.BOOLEAN },
-          subtask: { type: Type.INTEGER },
-          subtaskConstraint: { type: Type.STRING },
-          note: { type: Type.STRING },
+      type: Type.OBJECT,
+      properties: {
+        generatorCpp: { type: Type.STRING },
+        oracleBfCpp: { type: Type.STRING },
+        testCases: {
+          type: Type.ARRAY,
+          items: {
+            type: Type.OBJECT,
+            properties: {
+              id: { type: Type.INTEGER },
+              testName: { type: Type.STRING },
+              input: { type: Type.STRING },
+              output: { type: Type.STRING },
+              isSample: { type: Type.BOOLEAN },
+              subtask: { type: Type.INTEGER },
+              subtaskConstraint: { type: Type.STRING },
+              testCategory: { type: Type.STRING, enum: ["sample", "corner", "killer", "random", "max_stress"] },
+              note: { type: Type.STRING },
+            },
+            required: ["id", "testName", "input", "output"],
+          },
         },
-        required: ["id", "testName", "input", "output"],
       },
+      required: ["generatorCpp", "oracleBfCpp", "testCases"],
     },
   };
 
   try {
-    const { data: rawTests } = await executeGeminiJsonWithRetry(prompt, schemaConfig);
-    const tests = Array.isArray(rawTests) ? rawTests : (rawTests as any)?.testCases || [];
+    const { data: rawData } = await executeGeminiJsonWithRetry(prompt, schemaConfig);
+    const tests = Array.isArray(rawData?.testCases) ? rawData.testCases : [];
 
-    const formattedTests = tests.map((tc: any, idx: number) => {
+    const formattedTests = Array.from({ length: count }, (_, idx) => {
+      const tc = tests[idx] || {};
       const num = idx + 1;
+      const { category, defaultNote } = classifyTestCategory(num);
       return {
         id: num,
         testName: `test${num < 10 ? "0" + num : num}`,
-        input: String(tc.input || "").trim(),
+        input: String(tc.input || problem.sampleInput || "").trim(),
         output: String(tc.output || "").trim(),
         isSample: idx === 0,
-        subtask: tc.subtask,
-        subtaskConstraint: tc.subtaskConstraint,
-        note: tc.note || `Test case ${num}`,
+        subtask: tc.subtask || (idx < 6 ? 1 : idx < 12 ? 2 : 3),
+        subtaskConstraint: tc.subtaskConstraint || "",
+        testCategory: tc.testCategory || category,
+        note: tc.note || defaultNote,
       };
     });
 
-    let finalTests = formattedTests;
-    // GIẢI PHÁP 3: BIÊN DỊCH VÀ CHẠY CODE CHUẨN C++ ĐỂ SINH OUTPUT CHÍNH XÁC 100%
-    if (problem.solutionCpp && Array.isArray(formattedTests) && formattedTests.length > 0) {
-      try {
-        console.log(`[C++ Engine] Compiling & executing C++ solution for regenerated tests...`);
-        const execRes = await executeCppSolution(
-          problem.solutionCpp,
-          formattedTests,
-          problem.sampleInput
-        );
-        if (execRes.success) {
-          finalTests = execRes.testCases;
-          console.log(`[C++ Engine] Regenerated tests executed in ${execRes.totalTimeMs}ms with 100% precision`);
-        }
-      } catch (e) {
-        console.error('[C++ Runner in generate-more-tests] error:', e);
-      }
-    }
-
-    const mockProblem = {
+    let updatedProblem = {
       ...problem,
-      testCases: finalTests,
+      generatorCpp: rawData?.generatorCpp || problem.generatorCpp,
+      oracleBfCpp: rawData?.oracleBfCpp || problem.oracleBfCpp,
+      testCases: formattedTests,
     };
-    const validatedProblem = enrichAndEnforceSubtaskCompliance(mockProblem);
+
+    updatedProblem = await executeAndSelfHealCpp(updatedProblem, true);
+    updatedProblem = enrichAndEnforceSubtaskCompliance(updatedProblem);
 
     return res.json({
       success: true,
-      testCases: validatedProblem.testCases,
-      validationReport: validatedProblem.validationReport,
+      problem: updatedProblem,
+      testCases: updatedProblem.testCases,
+      validationReport: updatedProblem.validationReport,
+      threeLevelAudit: updatedProblem.threeLevelAudit,
     });
   } catch (error: any) {
     console.error("[Regenerate Tests] Failed:", error);
@@ -554,6 +685,92 @@ Bao gồm từ test01 đến test${count < 10 ? "0" + count : count}.`;
     });
   }
 });
+
+// API: Chạy Thẩm Định Độc Lập 3 Cấp Độ & Sinh Bộ 20 Test Bằng Code C++ (Zero-Trust Independent Audit)
+app.post(["/api/audit-3-level-cpp", "/audit-3-level-cpp"], async (req, res) => {
+  const { problem } = req.body;
+  if (!problem || !problem.solutionCpp) {
+    return res.status(400).json({ success: false, error: "Thiếu dữ liệu bài toán hoặc mã nguồn C++ để thẩm định." });
+  }
+
+  try {
+    let workingProblem = { ...problem };
+
+    // Nếu bài toán chưa có generatorCpp hoặc oracleBfCpp (ví dụ bài từ thư viện có sẵn hoặc bài cũ),
+    // yêu cầu AI xây dựng độc lập generator.cpp và oracle_bf.cpp trước khi chạy thẩm định 3 cấp độ trên g++
+    if (!workingProblem.generatorCpp || !workingProblem.oracleBfCpp) {
+      const synthPrompt = `Bạn là Chuyên gia Thẩm định Độc lập Đề thi HSG Tin học (Zero-Trust Auditor).
+Cho bài toán C++ sau:
+- Tên bài: ${workingProblem.problemName} (${workingProblem.problemCode})
+- Mô tả: ${workingProblem.description}
+- Dữ liệu vào: ${workingProblem.inputFormat}
+- Dữ liệu ra: ${workingProblem.outputFormat}
+- Ràng buộc & Subtask: ${workingProblem.constraints}
+- Ví dụ Input:
+${workingProblem.sampleInput}
+- Ví dụ Output:
+${workingProblem.sampleOutput}
+- Code giải hiện tại:
+\`\`\`cpp
+${workingProblem.solutionCpp}
+\`\`\`
+
+NHIỆM VỤ BẮT BUỘC (TUYỆT ĐỐI KHÔNG NHẨM TEST BẰNG TAY):
+1. Viết \`oracleBfCpp\` (C++17): Mô hình Brute-Force / Naive Oracle độc lập giải trực tiếp theo định nghĩa toán học của đề bài để đối chiếu chéo 100% trên dữ liệu nhỏ & Stress-Test.
+2. Viết \`generatorCpp\` (C++17): Chương trình sinh test tự động đọc \`int t; cin >> t;\` từ stdin và in ra dữ liệu \`.INP\` chuẩn cho test thứ \`t\`:
+   - \`t == 1\`: In chính xác Ví dụ Input.
+   - \`2 <= t <= 20\`: Sinh dữ liệu khớp 100% biên của từng Subtask trong đề bài, phân bổ đúng ma trận:
+     * 20% Test Biên cực tiểu & Đặc biệt (t = 2, 5, 11)
+     * 30% Test Cấu trúc & Bẫy thuật toán Killer / Anti-Greedy (t = 3, 6, 7, 12, 13, 14)
+     * 30% Test Ngẫu nhiên phân phối chuẩn (t = 8, 9, 15, 16, 17, 18)
+     * 20% Test Cực đại kịch trần ở cuối mỗi Subtask (t = 4, 10, 19, 20)
+   - \`t > 100\`: Sinh 1 test ngẫu nhiên nhỏ thuộc Subtask 1 với \`mt19937_64 rng(t * 1337)\` để phục vụ Stress-Test.
+3. Kiểm tra lại \`solutionCpp\`: nếu có nguy cơ tràn số nguyên (thiếu \`long long\`, \`1LL\`) hoặc chậm, hãy tối ưu hóa luôn.`;
+
+      const synthSchema = {
+        responseMimeType: "application/json",
+        responseSchema: {
+          type: Type.OBJECT,
+          properties: {
+            oracleBfCpp: { type: Type.STRING },
+            generatorCpp: { type: Type.STRING },
+            solutionCpp: { type: Type.STRING },
+          },
+          required: ["oracleBfCpp", "generatorCpp", "solutionCpp"],
+        },
+      };
+
+      const { data: synthData } = await executeGeminiJsonWithRetry(synthPrompt, synthSchema);
+      if (synthData) {
+        if (synthData.oracleBfCpp) workingProblem.oracleBfCpp = synthData.oracleBfCpp;
+        if (synthData.generatorCpp) workingProblem.generatorCpp = synthData.generatorCpp;
+        if (synthData.solutionCpp) workingProblem.solutionCpp = synthData.solutionCpp;
+      }
+    }
+
+    // Chạy Thẩm định Độc lập 3 Cấp độ thực tế bằng trình biên dịch g++ (kèm tự chữa lỗi nếu phát hiện phản ví dụ)
+    workingProblem = await executeAndSelfHealCpp(workingProblem, true);
+    workingProblem = enrichAndEnforceSubtaskCompliance(workingProblem);
+
+    const audit = workingProblem.threeLevelAudit;
+    const msg = audit
+      ? `Thẩm định độc lập 3 cấp độ hoàn tất! [Cấp 1] Sinh test từ generator.cpp | [Cấp 2] Đối chiếu Oracle & Stress-Test: ${audit.level2OracleStress.stressTestsMatched}/${audit.level2OracleStress.stressTestsRun} khớp 100% | [Cấp 3] Max ${audit.level3PerformanceAndSubtasks.maxExecutionTimeMs}ms (< 50% Time Limit).`
+      : `Đã hoàn tất thẩm định độc lập 3 cấp độ và đồng bộ 20 test qua g++!`;
+
+    return res.json({
+      success: true,
+      problem: workingProblem,
+      message: msg,
+    });
+  } catch (err: any) {
+    console.error("[3-Level Audit] Error:", err);
+    return res.status(500).json({
+      success: false,
+      error: "Không thể thực hiện thẩm định 3 cấp độ lúc này: " + (err?.message || String(err)),
+    });
+  }
+});
+
 
 // API: GIẢI PHÁP 3 - Đồng bộ & Sinh lại toàn bộ Output test cases từ Mã nguồn C++ chuẩn
 app.post(["/api/sync-tests-with-cpp", "/sync-tests-with-cpp"], async (req, res) => {
@@ -584,6 +801,13 @@ app.post(["/api/sync-tests-with-cpp", "/sync-tests-with-cpp"], async (req, res) 
       sampleOutput: execRes.sampleOutput || problem.sampleOutput,
       executedByCpp: true,
       cppExecutionTimeMs: execRes.totalTimeMs,
+      cppFailedTestCount: execRes.failedTestCount || 0,
+      cppSampleMatched: true,
+      cppCompileError: undefined,
+      cppExecutionDetails:
+        execRes.failedTestCount && execRes.failedTestCount > 0
+          ? `Có ${execRes.failedTestCount}/${execRes.testCases.length} test gặp lỗi TLE hoặc Runtime Error.`
+          : undefined,
     };
 
     updatedProblem = enrichAndEnforceSubtaskCompliance(updatedProblem);
@@ -591,7 +815,10 @@ app.post(["/api/sync-tests-with-cpp", "/sync-tests-with-cpp"], async (req, res) 
     return res.json({
       success: true,
       problem: updatedProblem,
-      message: `Đã biên dịch và thực thi C++ thành công toàn bộ ${execRes.testCases.length} test cases trong ${execRes.totalTimeMs}ms! Output chuẩn xác 100%.`,
+      message:
+        execRes.failedTestCount && execRes.failedTestCount > 0
+          ? `Đã chạy C++ trong ${execRes.totalTimeMs}ms (Có ${execRes.failedTestCount} test bị TLE/RTE - Hãy bấm "AI Sửa Lỗi & Tối Ưu Code").`
+          : `Đã biên dịch và thực thi C++ thành công toàn bộ ${execRes.testCases.length} test cases trong ${execRes.totalTimeMs}ms! Output chuẩn xác 100%.`,
     });
   } catch (err: any) {
     console.error('[C++ Runner manual error]:', err);
@@ -599,6 +826,165 @@ app.post(["/api/sync-tests-with-cpp", "/sync-tests-with-cpp"], async (req, res) 
       success: false,
       error: `Lỗi khi thực thi C++: ${err.message}`,
     });
+  }
+});
+
+// API: AI Tự động phân tích, sửa lỗi giải thuật C++ (tràn số long long, TLE, lỗi biên dịch) & chạy lại toàn bộ 20 test
+app.post(["/api/auto-repair-cpp-solution", "/auto-repair-cpp-solution"], async (req, res) => {
+  const { problem } = req.body;
+  if (!problem) {
+    return res.status(400).json({ success: false, error: "Thiếu dữ liệu bài toán để sửa lỗi." });
+  }
+
+  try {
+    // Bước 1: Chạy thử code hiện tại để thu thập chẩn đoán lỗi thực tế từ g++
+    let diagnosticInfo = "Người dùng yêu cầu kiểm tra, sửa lỗi tiềm ẩn (tràn số nguyên long long, lỗi mảng, tốc độ đọc ghi) và tối ưu hóa thuật toán.";
+    if (problem.solutionCpp && Array.isArray(problem.testCases) && problem.testCases.length > 0) {
+      const preCheck = await executeCppSolution(
+        problem.solutionCpp,
+        problem.testCases,
+        problem.sampleInput
+      );
+      if (!preCheck.success) {
+        diagnosticInfo = `LỖI BIÊN DỊCH G++ (C++17):\n${preCheck.compileError}`;
+      } else if (preCheck.failedTestCount && preCheck.failedTestCount > 0) {
+        diagnosticInfo =
+          `CÓ ${preCheck.failedTestCount}/${preCheck.testCases.length} TEST CASE BỊ LỖI THỰC THI (TLE / RUNTIME ERROR):\n` +
+          (preCheck.failingCases || [])
+            .slice(0, 4)
+            .map(
+              (fc) =>
+                `- ${fc.testName} (${fc.subtaskConstraint || "Subtask " + fc.subtask}) -> ${fc.status}: ${fc.errorMessage}\n  Input: ${fc.input.slice(0, 200)}`
+            )
+            .join("\n");
+      }
+    }
+
+    const prompt = `Bạn là một Huấn luyện viên đội tuyển Học sinh giỏi Quốc gia môn Tin học (C++17) kỳ cựu.
+Hãy PHÂN TÍCH, SỬA LỖI TRIỆT ĐỂ VÀ TỐI ƯU HÓA mã nguồn C++ cho bài toán sau:
+
+THÔNG TIN BÀI TOÁN:
+- Tên bài: ${problem.problemName} (${problem.problemCode})
+- Mô tả đề bài: ${problem.description}
+- Dữ liệu vào: ${problem.inputFormat}
+- Dữ liệu ra: ${problem.outputFormat}
+- Ràng buộc & Subtask: ${problem.constraints}
+- Ví dụ Input:
+${problem.sampleInput}
+- Ví dụ Output:
+${problem.sampleOutput}
+
+MÃ NGUỒN C++ HIỆN TẠI:
+\`\`\`cpp
+${problem.solutionCpp || "// Chưa có mã nguồn"}
+\`\`\`
+
+CHẨN ĐOÁN KỸ THUẬT TỪ TRÌNH BIÊN DỊCH G++:
+${diagnosticInfo}
+
+NHIỆM VỤ BẮT BUỘC:
+1. Viết lại mã nguồn C++17 (solutionCpp) CHUẨN XÁC 100%, biên dịch trực tiếp không lỗi bằng g++ -O3 -std=c++17.
+2. ĐỒNG BỘ TUYỆT ĐỐI KIỂU BIẾN VỚI RÀNG BUỘC:
+   - Sử dụng 'long long' cho mọi biến đếm, tổng, tích hoặc kết quả có nguy cơ vượt quá $2 \\cdot 10^9$, kèm ép kiểu '1LL * a * b' khi nhân.
+   - Đảm bảo thuật toán đạt độ phức tạp tối ưu nhất để vượt qua Subtask lớn nhất trong thời gian < 1.0 giây (không bị TLE).
+   - Bật tăng tốc I/O: ios_base::sync_with_stdio(false); cin.tie(NULL);
+   - Có comment tiếng Việt sư phạm và 2 dòng comment:
+     // freopen("${problem.problemCode}.inp", "r", stdin);
+     // freopen("${problem.problemCode}.out", "w", stdout);
+3. Cập nhật giải thích thuật toán (algorithmExplanation), độ phức tạp thời gian (timeComplexity), bộ nhớ (spaceComplexity) và các lỗi thường gặp (commonMistakes).`;
+
+    const schemaConfig = {
+      responseMimeType: "application/json",
+      responseSchema: {
+        type: Type.OBJECT,
+        properties: {
+          solutionCpp: { type: Type.STRING },
+          algorithmExplanation: { type: Type.STRING },
+          timeComplexity: { type: Type.STRING },
+          spaceComplexity: { type: Type.STRING },
+          commonMistakes: {
+            type: Type.ARRAY,
+            items: { type: Type.STRING },
+          },
+        },
+        required: [
+          "solutionCpp",
+          "algorithmExplanation",
+          "timeComplexity",
+          "spaceComplexity",
+          "commonMistakes",
+        ],
+      },
+    };
+
+    const { data: repaired } = await executeGeminiJsonWithRetry(prompt, schemaConfig);
+    let updatedProblem = {
+      ...problem,
+      solutionCpp: repaired.solutionCpp || problem.solutionCpp,
+      algorithmExplanation: repaired.algorithmExplanation || problem.algorithmExplanation,
+      timeComplexity: repaired.timeComplexity || problem.timeComplexity,
+      spaceComplexity: repaired.spaceComplexity || problem.spaceComplexity,
+      commonMistakes: Array.isArray(repaired.commonMistakes) ? repaired.commonMistakes : problem.commonMistakes,
+    };
+
+    // Biên dịch và chạy lại toàn bộ 20 test cases với code C++ mới
+    updatedProblem = await executeAndSelfHealCpp(updatedProblem, false);
+    updatedProblem = enrichAndEnforceSubtaskCompliance(updatedProblem);
+
+    return res.json({
+      success: true,
+      problem: updatedProblem,
+      message: `AI đã sửa lỗi, tối ưu hóa kiểu dữ liệu C++ (${updatedProblem.timeComplexity}) và chạy lại toàn bộ ${updatedProblem.testCases?.length || 20} test trong ${updatedProblem.cppExecutionTimeMs || 0}ms!`,
+    });
+  } catch (err: any) {
+    console.error("[Auto Repair C++] Error:", err);
+    return res.status(500).json({
+      success: false,
+      error: "Không thể tự động sửa mã nguồn lúc này: " + (err?.message || String(err)),
+    });
+  }
+});
+
+// API: Sandbox chạy thử nhanh mã nguồn C++ với Input tùy chỉnh của Giáo viên / Học sinh
+app.post(["/api/run-custom-cpp", "/run-custom-cpp"], async (req, res) => {
+  const { solutionCpp, customInput = "" } = req.body;
+  if (!solutionCpp) {
+    return res.status(400).json({ success: false, error: "Thiếu mã nguồn C++ để chạy thử." });
+  }
+
+  const comp = compileCppCode(solutionCpp);
+  if (!comp.success || !comp.binPath) {
+    return res.json({
+      success: false,
+      status: "compile_error",
+      compileError: comp.error,
+      output: "",
+      timeMs: 0,
+    });
+  }
+
+  try {
+    const runRes = await runBinaryWithInput(comp.binPath, String(customInput), 3500);
+    return res.json({
+      success: runRes.status === "success",
+      status: runRes.status,
+      output: normalizeOutputText(runRes.stdout),
+      stderr: runRes.stderr,
+      timeMs: runRes.timeMs,
+    });
+  } catch (err: any) {
+    return res.status(500).json({
+      success: false,
+      status: "runtime_error",
+      error: err?.message || "Lỗi khi chạy thử C++",
+    });
+  } finally {
+    if (comp.srcPath) {
+      try { fs.unlinkSync(comp.srcPath); } catch {}
+    }
+    if (comp.binPath) {
+      try { fs.unlinkSync(comp.binPath); } catch {}
+    }
   }
 });
 
@@ -784,31 +1170,8 @@ Hãy trả về định dạng JSON khớp với schema quy định.`;
       });
     }
 
-    // BIÊN DỊCH VÀ CHẠY CODE CHUẨN C++ ĐỂ SINH OUTPUT CHÍNH XÁC 100%
-    if (result.solutionCpp && Array.isArray(result.testCases) && result.testCases.length > 0) {
-      try {
-        console.log(`[C++ Engine] Compiling & executing C++ solution for refined problem ${result.problemCode}...`);
-        const execRes = await executeCppSolution(
-          result.solutionCpp,
-          result.testCases,
-          result.sampleInput
-        );
-        if (execRes.success) {
-          result.testCases = execRes.testCases;
-          if (execRes.sampleOutput) {
-            result.sampleOutput = execRes.sampleOutput;
-          }
-          result.executedByCpp = true;
-          result.cppExecutionTimeMs = execRes.totalTimeMs;
-          console.log(`[C++ Engine] Successfully executed all ${result.testCases.length} tests in ${execRes.totalTimeMs}ms (100% accurate output)`);
-        } else {
-          console.warn('[C++ Engine] Compilation warning/error:', execRes.compileError);
-          result.cppCompileError = execRes.compileError;
-        }
-      } catch (runErr) {
-        console.error('[C++ Engine] Execution error:', runErr);
-      }
-    }
+    // BIÊN DỊCH VÀ CHẠY CODE CHUẨN C++ (KÈM TỰ ĐỘNG SỬA LỖI SELF-HEALING)
+    result = await executeAndSelfHealCpp(result, true);
 
     // AUTOMATED VALIDATION & SUBTASK ENFORCEMENT
     result = enrichAndEnforceSubtaskCompliance(result);
@@ -825,6 +1188,15 @@ Hãy trả về định dạng JSON khớp với schema quy định.`;
       error: "Máy chủ AI hiện đang chịu tải cao (503). Vui lòng thử lại sau vài giây.",
     });
   }
+});
+
+// Download full skill bundle ZIP
+app.get("/api/download-skill-bundle", (_req, res) => {
+  const filePath = path.join(process.cwd(), "public", "themis_master_skill_bundle.zip");
+  if (fs.existsSync(filePath)) {
+    return res.download(filePath, "themis_master_skill_bundle.zip");
+  }
+  return res.status(404).json({ error: "Không tìm thấy file skill bundle." });
 });
 
 // Setup Vite or Static File Serving

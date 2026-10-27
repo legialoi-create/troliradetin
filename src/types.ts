@@ -25,6 +25,8 @@ export interface CurriculumTopic {
   }[];
 }
 
+export type TestCategory = 'sample' | 'corner' | 'killer' | 'random' | 'max_stress';
+
 export interface TestCase {
   id: number;
   testName: string; // e.g. "test01"
@@ -34,11 +36,47 @@ export interface TestCase {
   note?: string;
   subtask?: number; // e.g. 1, 2, 3
   subtaskConstraint?: string; // e.g. "Subtask 1: n <= 100"
+  testCategory?: TestCategory;
+  generatedByCode?: boolean;
+  oracleVerified?: boolean;
   validationStatus?: 'pass' | 'warning' | 'fail';
   validationMessage?: string;
   executionTimeMs?: number;
   executionStatus?: 'success' | 'timeout' | 'runtime_error';
   errorMessage?: string;
+}
+
+export interface ThreeLevelAuditReport {
+  auditedAt: number;
+  overallPassed: boolean;
+  level1Generator: {
+    passed: boolean;
+    compiled: boolean;
+    generatedByCppCode: boolean;
+    cornerCount: number;
+    killerCount: number;
+    randomCount: number;
+    maxStressCount: number;
+    summary: string;
+  };
+  level2OracleStress: {
+    passed: boolean;
+    oracleCompiled: boolean;
+    stressTestsRun: number;
+    stressTestsMatched: number;
+    subtask1CrossChecked: number;
+    selfHealed: boolean;
+    counterExample?: string;
+    summary: string;
+  };
+  level3PerformanceAndSubtasks: {
+    passed: boolean;
+    maxExecutionTimeMs: number;
+    avgExecutionTimeMs: number;
+    timeLimitSafe: boolean;
+    allSubtasksCompliant: boolean;
+    summary: string;
+  };
 }
 
 export interface SubtaskInfo {
@@ -109,6 +147,8 @@ export interface ProblemData {
   sampleOutput: string;
   sampleExplanation: string;
   solutionCpp: string;
+  oracleBfCpp?: string;
+  generatorCpp?: string;
   algorithmExplanation: string;
   timeComplexity: string;
   spaceComplexity: string;
@@ -116,6 +156,7 @@ export interface ProblemData {
   testCases: TestCase[];
   createdAt: number;
   validationReport?: TestValidationReport;
+  threeLevelAudit?: ThreeLevelAuditReport;
   executedByCpp?: boolean;
   cppExecutionTimeMs?: number;
   cppCompileError?: string;

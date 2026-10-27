@@ -13,6 +13,7 @@ import {
   LogOut,
   ShieldCheck,
   User,
+  Terminal,
 } from 'lucide-react';
 import { ProblemData } from '../types';
 import { useAuth } from '../context/AuthContext';
@@ -25,6 +26,7 @@ interface HeaderProps {
   onOpenHistory: () => void;
   historyCount: number;
   onResetToSample: () => void;
+  onOpenSkillModal: () => void;
 }
 
 export const Header: React.FC<HeaderProps> = ({
@@ -35,6 +37,7 @@ export const Header: React.FC<HeaderProps> = ({
   onOpenHistory,
   historyCount,
   onResetToSample,
+  onOpenSkillModal,
 }) => {
   const { user, isAuthenticated, logout, openLoginModal } = useAuth();
   const [copiedCode, setCopiedCode] = React.useState(false);
@@ -89,6 +92,17 @@ export const Header: React.FC<HeaderProps> = ({
                   {historyCount}
                 </span>
               )}
+            </button>
+
+            {/* AI Skill Button */}
+            <button
+              id="btn-open-skill-modal"
+              onClick={onOpenSkillModal}
+              title="Xem và sao chép Skill prompt chuẩn AI"
+              className="inline-flex items-center gap-1.5 px-3 py-2 text-xs sm:text-sm font-medium text-purple-700 bg-purple-50 hover:bg-purple-100 border border-purple-200 rounded-lg transition-colors"
+            >
+              <Terminal className="w-4 h-4 text-purple-600" />
+              <span className="hidden md:inline font-semibold">Agent Skill</span>
             </button>
 
             {/* Copy C++ Code */}

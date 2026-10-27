@@ -1,24 +1,29 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import {
-  Code,
   Copy,
   Check,
   Download,
   AlertTriangle,
   Lightbulb,
   Cpu,
-  Layers,
-  FileCode,
   Sparkles,
+  Edit3,
+  Save,
+  Play,
+  Terminal,
+  RotateCcw,
+  X,
 } from 'lucide-react';
 import { ProblemData } from '../types';
+import { safeParseJsonResponse } from '../utils/apiHelper';
 
 interface SolutionViewProps {
   problem: ProblemData;
-  onSyncWithCpp?: () => void | Promise<void>;
+  onSyncWithCpp?: (customCode?: string) => void | Promise<void>;
   isSyncingWithCpp?: boolean;
   onAutoRepairCpp?: () => void | Promise<void>;
   isAutoRepairingCpp?: boolean;
+  onUpdateSolutionCode?: (newCode: string) => void;
 }
 
 export const SolutionView: React.FC<SolutionViewProps> = ({
@@ -27,13 +32,37 @@ export const SolutionView: React.FC<SolutionViewProps> = ({
   isSyncingWithCpp = false,
   onAutoRepairCpp,
   isAutoRepairingCpp = false,
+  onUpdateSolutionCode,
 }) => {
   const [copied, setCopied] = useState(false);
   const [useFreopen, setUseFreopen] = useState(false);
+  const [isEditingCode, setIsEditingCode] = useState(false);
+  const [editableCode, setEditableCode] = useState(problem.solutionCpp || '');
+
+  // Custom Input Sandbox states
+  const [customInput, setCustomInput] = useState(problem.sampleInput || '');
+  const [sandboxOutput, setSandboxOutput] = useState<string | null>(null);
+  const [sandboxStatus, setSandboxStatus] = useState<
+    'idle' | 'running' | 'success' | 'compile_error' | 'timeout' | 'runtime_error'
+  >('idle');
+  const [sandboxError, setSandboxError] = useState<string | null>(null);
+  const [sandboxTimeMs, setSandboxTimeMs] = useState<number | null>(null);
+
+  useEffect(() => {
+    setEditableCode(problem.solutionCpp || '');
+    setIsEditingCode(false);
+  }, [problem.id, problem.solutionCpp]);
+
+  useEffect(() => {
+    setCustomInput(problem.sampleInput || '');
+    setSandboxOutput(null);
+    setSandboxStatus('idle');
+    setSandboxError(null);
+  }, [problem.id, problem.sampleInput]);
 
   // Generate code with or without active freopen
   const formattedCode = React.useMemo(() => {
-    const raw = problem.solutionCpp || '';
+    const raw = isEditingCode ? editableCode : problem.solutionCpp || '';
     if (!useFreopen) return raw;
 
     // Uncomment freopen lines if they are commented
@@ -46,7 +75,7 @@ export const SolutionView: React.FC<SolutionViewProps> = ({
         /\/\/\s*freopen\("([^"]+)\.out",\s*"w",\s*stdout\);/g,
         'freopen("$1.out", "w", stdout);'
       );
-  }, [problem.solutionCpp, useFreopen]);
+  }, [problem.solutionCpp, editableCode, isEditingCode, useFreopen]);
 
   const handleCopy = async () => {
     await navigator.clipboard.writeText(formattedCode);
@@ -64,6 +93,54 @@ export const SolutionView: React.FC<SolutionViewProps> = ({
     a.click();
     document.body.removeChild(a);
     URL.revokeObjectURL(url);
+  };
+
+  const handleSaveAndSyncCode = async () => {
+    if (onUpdateSolutionCode) {
+      onUpdateSolutionCode(editableCode);
+    }
+    setIsEditingCode(false);
+    if (onSyncWithCpp) {
+      await onSyncWithCpp(editableCode);
+    }
+  };
+
+  const handleRunSandbox = async () => {
+    try {
+      setSandboxStatus('running');
+      setSandboxError(null);
+      const codeToRun = isEditingCode ? editableCode : problem.solutionCpp;
+      const res = await fetch('/api/run-custom-cpp', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          solutionCpp: codeToRun,
+          customInput,
+        }),
+      });
+      const data = await safeParseJsonResponse(res);
+      setSandboxTimeMs(data.timeMs ?? 0);
+
+      if (data.status === 'compile_error') {
+        setSandboxStatus('compile_error');
+        setSandboxError(data.compileError || 'Lỗi biên dịch C++');
+        setSandboxOutput('');
+      } else if (data.status === 'timeout') {
+        setSandboxStatus('timeout');
+        setSandboxError('Quá thời gian chạy (> 3.5 giây - TLE)');
+        setSandboxOutput('');
+      } else if (data.status === 'runtime_error') {
+        setSandboxStatus('runtime_error');
+        setSandboxError(data.stderr || data.error || 'Lỗi Runtime Error');
+        setSandboxOutput(data.output || '');
+      } else {
+        setSandboxStatus('success');
+        setSandboxOutput(data.output ?? '');
+      }
+    } catch (err: any) {
+      setSandboxStatus('runtime_error');
+      setSandboxError(err.message || 'Không thể kết nối máy chủ biên dịch C++.');
+    }
   };
 
   const lines = formattedCode.split('\n');
@@ -92,9 +169,42 @@ export const SolutionView: React.FC<SolutionViewProps> = ({
             )}
           </div>
 
-          <div className="flex items-center space-x-2">
-            {/* Run C++ Button */}
-            {onAutoRepairCpp && (
+          <div className="flex items-center flex-wrap gap-2">
+            {/* Edit / Save Code Toggle */}
+            {isEditingCode ? (
+              <>
+                <button
+                  onClick={handleSaveAndSyncCode}
+                  disabled={isSyncingWithCpp}
+                  className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-bold text-white bg-blue-600 hover:bg-blue-500 rounded-lg transition-colors border border-blue-500 disabled:opacity-50"
+                >
+                  <Save className="w-3.5 h-3.5" />
+                  <span>Lưu & Chạy Đồng Bộ 20 Test</span>
+                </button>
+                <button
+                  onClick={() => {
+                    setEditableCode(problem.solutionCpp || '');
+                    setIsEditingCode(false);
+                  }}
+                  className="inline-flex items-center gap-1 px-2.5 py-1.5 text-xs font-medium text-slate-300 hover:text-white bg-slate-800 hover:bg-slate-700 rounded-lg border border-slate-700"
+                >
+                  <X className="w-3.5 h-3.5" />
+                  <span>Hủy</span>
+                </button>
+              </>
+            ) : (
+              <button
+                onClick={() => setIsEditingCode(true)}
+                className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold text-slate-200 hover:text-white bg-slate-800 hover:bg-slate-700 rounded-lg transition-colors border border-slate-700"
+                title="Chỉnh sửa trực tiếp mã nguồn C++ và biên dịch lại"
+              >
+                <Edit3 className="w-3.5 h-3.5 text-blue-400" />
+                <span>Sửa Code C++</span>
+              </button>
+            )}
+
+            {/* AI Auto Repair Button */}
+            {onAutoRepairCpp && !isEditingCode && (
               <button
                 id="btn-auto-repair-cpp-from-solution"
                 onClick={onAutoRepairCpp}
@@ -107,10 +217,11 @@ export const SolutionView: React.FC<SolutionViewProps> = ({
               </button>
             )}
 
-            {onSyncWithCpp && (
+            {/* Run C++ Button */}
+            {onSyncWithCpp && !isEditingCode && (
               <button
                 id="btn-sync-cpp-from-solution"
-                onClick={onSyncWithCpp}
+                onClick={() => onSyncWithCpp()}
                 disabled={isSyncingWithCpp || isAutoRepairingCpp}
                 className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-bold text-white bg-emerald-600 hover:bg-emerald-500 rounded-lg transition-colors border border-emerald-500 disabled:opacity-50"
                 title="Biên dịch code C++ này và chạy lại toàn bộ test cases để cập nhật 100% Output chính xác"
@@ -121,15 +232,17 @@ export const SolutionView: React.FC<SolutionViewProps> = ({
             )}
 
             {/* Themis Freopen Toggle */}
-            <label className="inline-flex items-center gap-2 cursor-pointer text-xs text-slate-300 mr-2 bg-slate-800/80 px-2.5 py-1 rounded-lg border border-slate-700">
-              <input
-                type="checkbox"
-                checked={useFreopen}
-                onChange={(e) => setUseFreopen(e.target.checked)}
-                className="rounded border-slate-600 text-blue-500 focus:ring-0"
-              />
-              <span>Mở đọc ghi file Themis (.inp / .out)</span>
-            </label>
+            {!isEditingCode && (
+              <label className="inline-flex items-center gap-2 cursor-pointer text-xs text-slate-300 bg-slate-800/80 px-2.5 py-1 rounded-lg border border-slate-700">
+                <input
+                  type="checkbox"
+                  checked={useFreopen}
+                  onChange={(e) => setUseFreopen(e.target.checked)}
+                  className="rounded border-slate-600 text-blue-500 focus:ring-0"
+                />
+                <span>Mở đọc ghi file Themis (.inp / .out)</span>
+              </label>
+            )}
 
             {/* Copy button */}
             <button
@@ -162,28 +275,140 @@ export const SolutionView: React.FC<SolutionViewProps> = ({
           </div>
         </div>
 
-        {/* Code Content with Line Numbers */}
-        <div className="p-4 overflow-x-auto text-xs font-mono leading-relaxed max-h-[550px] scrollbar-thin">
-          <table className="w-full text-left border-collapse">
-            <tbody>
-              {lines.map((line, idx) => (
-                <tr key={idx} className="hover:bg-slate-800/50">
-                  <td className="w-10 pr-4 text-right select-none text-slate-600 text-[11px] align-top">
-                    {idx + 1}
-                  </td>
-                  <td className="text-slate-200 whitespace-pre">
-                    {line.startsWith('//') ? (
-                      <span className="text-slate-500 italic">{line}</span>
-                    ) : line.startsWith('#include') ? (
-                      <span className="text-pink-400 font-semibold">{line}</span>
-                    ) : (
-                      line
-                    )}
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
+        {/* Code Content or Editor */}
+        {isEditingCode ? (
+          <div className="p-4 bg-slate-900">
+            <div className="mb-2 flex items-center justify-between text-xs text-slate-400">
+              <span>
+                Đang chỉnh sửa mã nguồn <strong className="text-white">{problem.problemCode}.cpp</strong>. Sau khi sửa xong, bấm <strong>"Lưu & Chạy Đồng Bộ 20 Test"</strong> để biên dịch g++ và cập nhật lại toàn bộ output.
+              </span>
+            </div>
+            <textarea
+              value={editableCode}
+              onChange={(e) => setEditableCode(e.target.value)}
+              rows={22}
+              spellCheck={false}
+              className="w-full font-mono text-xs bg-slate-950 text-emerald-300 p-4 rounded-xl border border-slate-700 focus:outline-none focus:border-blue-500 leading-relaxed resize-y"
+            />
+          </div>
+        ) : (
+          <div className="p-4 overflow-x-auto text-xs font-mono leading-relaxed max-h-[550px] scrollbar-thin">
+            <table className="w-full text-left border-collapse">
+              <tbody>
+                {lines.map((line, idx) => (
+                  <tr key={idx} className="hover:bg-slate-800/50">
+                    <td className="w-10 pr-4 text-right select-none text-slate-600 text-[11px] align-top">
+                      {idx + 1}
+                    </td>
+                    <td className="text-slate-200 whitespace-pre">
+                      {line.startsWith('//') ? (
+                        <span className="text-slate-500 italic">{line}</span>
+                      ) : line.startsWith('#include') ? (
+                        <span className="text-pink-400 font-semibold">{line}</span>
+                      ) : (
+                        line
+                      )}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </div>
+
+      {/* Interactive C++ Sandbox Card */}
+      <div className="bg-white rounded-2xl border border-slate-200 p-5 shadow-xs space-y-4">
+        <div className="flex flex-wrap items-center justify-between gap-3 border-b border-slate-100 pb-3">
+          <div className="flex items-center gap-2.5">
+            <div className="w-8 h-8 rounded-lg bg-emerald-100 text-emerald-700 flex items-center justify-center">
+              <Terminal className="w-4 h-4" />
+            </div>
+            <div>
+              <h3 className="text-sm font-bold text-slate-900">
+                Phòng Thí Nghiệm C++ (Chạy Thử Nhanh Với Input Tùy Chỉnh)
+              </h3>
+              <p className="text-xs text-slate-500">
+                Biên dịch trực tiếp bằng <code className="font-mono text-slate-700">g++ -O3 -std=c++17</code> và kiểm tra kết quả đầu ra tức thì
+              </p>
+            </div>
+          </div>
+
+          <div className="flex items-center gap-2">
+            <button
+              type="button"
+              onClick={() => setCustomInput(problem.sampleInput || '')}
+              className="inline-flex items-center gap-1 px-2.5 py-1.5 text-xs font-medium text-slate-600 hover:text-slate-900 bg-slate-100 hover:bg-slate-200 rounded-lg transition-colors"
+            >
+              <RotateCcw className="w-3.5 h-3.5" />
+              <span>Nạp Input Ví Dụ</span>
+            </button>
+            <button
+              type="button"
+              onClick={handleRunSandbox}
+              disabled={sandboxStatus === 'running'}
+              className="inline-flex items-center gap-1.5 px-4 py-1.5 text-xs font-bold text-white bg-emerald-600 hover:bg-emerald-700 rounded-lg shadow-xs transition-all disabled:opacity-50"
+            >
+              <Play className="w-3.5 h-3.5 fill-current" />
+              <span>{sandboxStatus === 'running' ? 'Đang biên dịch & chạy...' : 'Chạy Thử (g++)'}</span>
+            </button>
+          </div>
+        </div>
+
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+          <div>
+            <label className="block text-xs font-bold text-slate-700 mb-1.5 font-mono">
+              Dữ liệu vào thử nghiệm (stdin):
+            </label>
+            <textarea
+              rows={5}
+              value={customInput}
+              onChange={(e) => setCustomInput(e.target.value)}
+              placeholder="Nhập dữ liệu đầu vào để kiểm tra..."
+              className="w-full font-mono text-xs bg-slate-900 text-emerald-300 p-3 rounded-xl border border-slate-800 focus:outline-none focus:ring-2 focus:ring-emerald-500/30 leading-relaxed resize-y"
+            />
+          </div>
+
+          <div>
+            <div className="flex items-center justify-between mb-1.5">
+              <span className="text-xs font-bold text-slate-700 font-mono">
+                Kết quả xuất ra (stdout):
+              </span>
+              {sandboxTimeMs !== null && sandboxStatus !== 'idle' && (
+                <span
+                  className={`text-[11px] font-bold px-2 py-0.5 rounded-full ${
+                    sandboxStatus === 'success'
+                      ? 'bg-emerald-50 text-emerald-700 border border-emerald-200'
+                      : 'bg-rose-50 text-rose-700 border border-rose-200'
+                  }`}
+                >
+                  {sandboxStatus === 'success'
+                    ? `✓ Thành công (${sandboxTimeMs}ms)`
+                    : sandboxStatus === 'compile_error'
+                    ? '✗ Lỗi biên dịch'
+                    : sandboxStatus === 'timeout'
+                    ? '✗ Quá thời gian (TLE)'
+                    : '✗ Lỗi thực thi'}
+                </span>
+              )}
+            </div>
+
+            <div className="w-full min-h-[118px] font-mono text-xs bg-slate-900 text-amber-300 p-3 rounded-xl border border-slate-800 overflow-x-auto whitespace-pre-wrap leading-relaxed">
+              {sandboxStatus === 'idle' ? (
+                <span className="text-slate-500 italic">
+                  Bấm nút "Chạy Thử (g++)" để xem kết quả thực thi...
+                </span>
+              ) : sandboxStatus === 'running' ? (
+                <span className="text-slate-400 animate-pulse">
+                  Đang biên dịch bằng g++ -O3 -std=c++17 và thực thi...
+                </span>
+              ) : sandboxError ? (
+                <span className="text-rose-400">{sandboxError}</span>
+              ) : (
+                sandboxOutput || <span className="text-slate-500">(Không có dữ liệu in ra)</span>
+              )}
+            </div>
+          </div>
         </div>
       </div>
 
@@ -216,7 +441,7 @@ export const SolutionView: React.FC<SolutionViewProps> = ({
                   </div>
                 </div>
                 <span className="text-[10px] px-2 py-0.5 rounded bg-blue-100 text-blue-800 font-semibold">
-                  Tối ưu cho người mới
+                  Tối ưu chuẩn thi HSG
                 </span>
               </div>
 
@@ -235,7 +460,7 @@ export const SolutionView: React.FC<SolutionViewProps> = ({
           </div>
 
           <div className="mt-4 pt-3 border-t border-slate-100 text-[11px] text-slate-500">
-            Học sinh mới nên tập phân tích giới hạn N trong đề bài để ước lượng số phép tính không vượt quá 10^8 phép tính/giây.
+            Học sinh nên tập phân tích giới hạn N và miền giá trị trong đề bài để chọn kiểu biến (int / long long) và ước lượng số phép tính không vượt quá 10^8 phép tính/giây.
           </div>
         </div>
       </div>
