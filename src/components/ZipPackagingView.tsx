@@ -444,13 +444,30 @@ export const ZipPackagingView: React.FC<ZipPackagingViewProps> = ({
               <span>{codeFormatted}/</span>
             </div>
 
-            {/* Solution and Docs if included */}
+            {/* Solution, Python Generator, Validator, and Oracle if included */}
             {includeSolution && (
-              <div className="flex items-center gap-2 pl-6 text-pink-300">
-                <FileCode className="w-3.5 h-3.5 text-pink-400" />
-                <span>{codeFormatted}.cpp</span>
-                <span className="text-[10px] text-slate-500 font-sans">(Mã nguồn lời giải mẫu)</span>
-              </div>
+              <>
+                <div className="flex items-center gap-2 pl-6 text-pink-300">
+                  <FileCode className="w-3.5 h-3.5 text-pink-400" />
+                  <span>{codeFormatted}.cpp</span>
+                  <span className="text-[10px] text-slate-500 font-sans">(Mã nguồn C++17 lời giải tối ưu chuẩn AC)</span>
+                </div>
+                <div className="flex items-center gap-2 pl-6 text-indigo-300">
+                  <FileCode className="w-3.5 h-3.5 text-indigo-400" />
+                  <span className="font-semibold">generator.py</span>
+                  <span className="text-[10px] text-indigo-300/80 font-sans">(Code Python 3 sinh tự động 20 bộ test .INP • 0% nhẩm tay)</span>
+                </div>
+                <div className="flex items-center gap-2 pl-6 text-sky-300">
+                  <FileCode className="w-3.5 h-3.5 text-sky-400" />
+                  <span className="font-semibold">validator.py</span>
+                  <span className="text-[10px] text-sky-300/80 font-sans">(Code Python 3 kiểm định độc lập biên Subtask &amp; LF \n)</span>
+                </div>
+                <div className="flex items-center gap-2 pl-6 text-amber-300">
+                  <FileCode className="w-3.5 h-3.5 text-amber-400" />
+                  <span className="font-semibold">oracle_bf.cpp</span>
+                  <span className="text-[10px] text-amber-300/80 font-sans">(Code C++17 Brute-Force Naive Oracle đối chiếu độc lập)</span>
+                </div>
+              </>
             )}
 
             {includeDoc && (

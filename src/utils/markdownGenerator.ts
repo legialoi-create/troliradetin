@@ -10,12 +10,18 @@ import { downloadBlob } from './zipGenerator';
  * - Converts big-O notations into ($O(N \log N)$).
  * - Converts Vietnamese variable phrases (e.g. số nguyên dương n, mảng a, đỉnh u) into LaTeX ($n$, $a$, $u$).
  */
-export function standardizeLatexMath(raw: string): string {
-  if (!raw) return '';
+export function standardizeLatexMath(raw: unknown): string {
+  if (raw === undefined || raw === null) return '';
+  const safeRaw = Array.isArray(raw)
+    ? raw.map((x) => String(x ?? '')).join('\n')
+    : typeof raw === 'string'
+    ? raw
+    : String(raw);
+  if (!safeRaw) return '';
 
   // 1. Separate code blocks and inline code to prevent altering code
   const codeBlocks: string[] = [];
-  let s = raw.replace(/(```[\s\S]*?```|`[^`\n]+`)/g, (match) => {
+  let s = safeRaw.replace(/(```[\s\S]*?```|`[^`\n]+`)/g, (match) => {
     const idx = codeBlocks.length;
     codeBlocks.push(match);
     return `___CODE_BLOCK_${idx}___`;

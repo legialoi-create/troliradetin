@@ -70,18 +70,22 @@ export async function generateThemisTestZip(
     }
   });
 
-  // Include solution code if requested
+  // Include solution code, Python generator.py, validator.py, and C++ Oracle if requested
   if (includeSolution && problem.solutionCpp) {
     rootFolder.file(`${codeFormatted}.cpp`, problem.solutionCpp);
     if (problem.oracleBfCpp) {
       rootFolder.file('oracle_bf.cpp', problem.oracleBfCpp);
+    }
+    if (problem.generatorPy) {
+      rootFolder.file('generator.py', problem.generatorPy);
     }
     if (problem.generatorCpp) {
       rootFolder.file('generator.cpp', problem.generatorCpp);
     }
     rootFolder.file(
       'validator.py',
-      `#!/usr/bin/env python3
+      problem.validatorPy ||
+        `#!/usr/bin/env python3
 # Script Kiểm định Độc lập Định dạng 20 Test Chuẩn Themis (Zero-Trust Validator)
 import os, sys
 
@@ -113,8 +117,8 @@ if __name__ == "__main__":
     const auditText = audit
       ? `\n----------------------------------------------------------------------
 8. BÁO CÁO THẨM ĐỊNH ĐỘC LẬP 3 CẤP ĐỘ (ZERO-TRUST INDEPENDENT AUDIT)
-- Cấp độ 1 (Sinh Test Bằng Code C++ & Tỷ Lệ Bẫy): ${audit.level1Generator.summary}
-- Cấp độ 2 (Đối Chiếu Brute-Force Oracle & Stress-Test): ${audit.level2OracleStress.summary}
+- Cấp độ 1 (Sinh Test Bằng Code Python generator.py & Tỷ Lệ Bẫy): ${audit.level1Generator.summary}
+- Cấp độ 2 (Đối Chiếu Độc Lập Brute-Force Oracle & Stress-Test): ${audit.level2OracleStress.summary}
 - Cấp độ 3 (Hiệu Năng Thực Thi < 50% Time Limit): ${audit.level3PerformanceAndSubtasks.summary}`
       : '';
 
@@ -267,6 +271,12 @@ export async function generateFullExamPackageZip(
       codeDir.file(`${codeFormatted}.cpp`, prob.solutionCpp);
       if (prob.oracleBfCpp) {
         codeDir.file(`${codeFormatted}_oracle_bf.cpp`, prob.oracleBfCpp);
+      }
+      if (prob.generatorPy) {
+        codeDir.file(`${codeFormatted}_generator.py`, prob.generatorPy);
+      }
+      if (prob.validatorPy) {
+        codeDir.file(`${codeFormatted}_validator.py`, prob.validatorPy);
       }
       if (prob.generatorCpp) {
         codeDir.file(`${codeFormatted}_generator.cpp`, prob.generatorCpp);

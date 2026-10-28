@@ -57,7 +57,8 @@ export const TestCasesView: React.FC<TestCasesViewProps> = ({
   const [copiedInp, setCopiedInp] = useState(false);
   const [copiedOut, setCopiedOut] = useState(false);
   const [showCheckDetails, setShowCheckDetails] = useState(false);
-  const [showAuditCodeModal, setShowAuditCodeModal] = useState<'none' | 'generator' | 'oracle'>('none');
+  const [showAuditCodeModal, setShowAuditCodeModal] = useState<'none' | 'generator_py' | 'validator_py' | 'oracle'>('none');
+  const [copiedAuditCode, setCopiedAuditCode] = useState(false);
 
   // Compute live validation report
   const validationReport = useMemo(() => {
@@ -180,13 +181,13 @@ export const TestCasesView: React.FC<TestCasesViewProps> = ({
               onClick={onAuditThreeLevel}
               disabled={isAuditingThreeLevel || isAutoRepairingCpp || isSyncingWithCpp || isRegenerating || !problem.solutionCpp}
               className="inline-flex items-center gap-1.5 px-3.5 py-2 text-xs font-bold text-white bg-indigo-600 hover:bg-indigo-700 active:bg-indigo-800 rounded-lg transition-colors shadow-sm disabled:opacity-50"
-              title="Thẩm định độc lập 3 cấp độ: (1) Viết & chạy code C++ generator.cpp tạo 20 test (không nhẩm), (2) Đối chiếu chéo với Brute-Force Oracle (oracle_bf.cpp) & Stress-Test, (3) Kiểm định biên Subtask & thời gian < 50% Time Limit"
+              title="Thẩm định độc lập 3 cấp độ: (1) Viết & chạy code Python generator.py tạo 20 test (không nhẩm), (2) Đối chiếu chéo với Brute-Force Oracle (oracle_bf.cpp) & Stress-Test, (3) Kiểm định validator.py & thời gian < 50% Time Limit"
             >
               <ShieldCheck className={`w-4 h-4 ${isAuditingThreeLevel ? 'animate-spin' : ''}`} />
               <span>
                 {isAuditingThreeLevel
-                  ? 'Đang Thẩm Định 3 Cấp Độ (g++)...'
-                  : 'Thẩm Định Độc Lập 3 Cấp Độ & Tạo Test Bằng Code'}
+                  ? 'Đang Chạy generator.py & Thẩm Định 3 Cấp...'
+                  : 'Tạo Test Bằng generator.py & Thẩm Định Độc Lập 3 Cấp'}
               </span>
             </button>
           )}
@@ -232,7 +233,7 @@ export const TestCasesView: React.FC<TestCasesViewProps> = ({
             className="inline-flex items-center gap-1.5 px-3 py-2 text-xs font-semibold text-indigo-700 bg-indigo-50 hover:bg-indigo-100 border border-indigo-200 rounded-lg transition-colors disabled:opacity-50"
           >
             <RotateCcw className={`w-4 h-4 ${isRegenerating ? 'animate-spin' : ''}`} />
-            <span>{isRegenerating ? 'Đang tạo bằng code...' : 'Sinh lại 20 test (Code)'}</span>
+            <span>{isRegenerating ? 'Đang chạy generator.py...' : 'Sinh lại 20 test (generator.py)'}</span>
           </button>
         </div>
       </div>
@@ -247,7 +248,7 @@ export const TestCasesView: React.FC<TestCasesViewProps> = ({
             <div>
               <div className="flex items-center gap-2 flex-wrap">
                 <h3 className="text-sm sm:text-base font-bold text-white">
-                  Thẩm Định Độc Lập 3 Cấp Độ (Zero-Trust Audit &amp; Sinh Test Bằng Code C++)
+                  Thẩm Định Độc Lập 3 Cấp Độ (Tạo Test Bằng Code <code className="text-indigo-300 font-mono">generator.py</code> • 0% Nhẩm Tay)
                 </h3>
                 <span
                   className={`text-[11px] font-bold px-2.5 py-0.5 rounded-full border ${
@@ -257,47 +258,59 @@ export const TestCasesView: React.FC<TestCasesViewProps> = ({
                   }`}
                 >
                   {audit?.overallPassed
-                    ? '✓ ĐÃ THẨM ĐỊNH 3 CẤP ĐỘ (0% NHẨM TAY)'
+                    ? '✓ ĐÃ THẨM ĐỊNH ĐỘC LẬP 3 CẤP (0% NHẨM TAY)'
                     : '⚡ SẴN SÀNG THẨM ĐỊNH ĐỘC LẬP'}
                 </span>
               </div>
               <p className="text-xs text-slate-400 mt-1">
-                Nguyên tắc tối thượng: Tuyệt đối không nhẩm test bằng tay hoặc AI — Dùng <code className="text-indigo-300 font-mono">generator.cpp</code> tạo <code className="text-emerald-300 font-mono">.INP</code>, đối chiếu chéo 2 mô hình (<code className="text-amber-300 font-mono">oracle_bf.cpp</code> vs <code className="text-teal-300 font-mono">{problem.problemCode}.cpp</code>) và đo hiệu năng thực tế trên <code className="font-mono text-slate-200">g++ -O3 -std=c++17</code>.
+                Nguyên tắc tối thượng: Tuyệt đối không nhẩm test bằng tay hoặc AI — Dùng code Python <code className="text-indigo-300 font-mono">generator.py</code> sinh 20 file <code className="text-emerald-300 font-mono">.INP</code>, kiểm định bằng <code className="text-sky-300 font-mono">validator.py</code>, và đối chiếu chéo 2 mô hình độc lập (<code className="text-amber-300 font-mono">oracle_bf.cpp</code> vs <code className="text-teal-300 font-mono">{problem.problemCode}.cpp</code>).
               </p>
             </div>
           </div>
 
           <div className="flex items-center gap-2 shrink-0 flex-wrap">
-            {problem.generatorCpp && (
-              <button
-                onClick={() =>
-                  setShowAuditCodeModal(showAuditCodeModal === 'generator' ? 'none' : 'generator')
-                }
-                className={`inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold rounded-lg border transition-colors ${
-                  showAuditCodeModal === 'generator'
-                    ? 'bg-indigo-600 text-white border-indigo-500'
-                    : 'bg-slate-800 text-slate-200 border-slate-700 hover:bg-slate-700'
-                }`}
-              >
-                <Code2 className="w-3.5 h-3.5" />
-                <span>Code Tạo Test (generator.cpp)</span>
-              </button>
-            )}
-            {problem.oracleBfCpp && (
-              <button
-                onClick={() =>
-                  setShowAuditCodeModal(showAuditCodeModal === 'oracle' ? 'none' : 'oracle')
-                }
-                className={`inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold rounded-lg border transition-colors ${
-                  showAuditCodeModal === 'oracle'
-                    ? 'bg-amber-600 text-white border-amber-500'
-                    : 'bg-slate-800 text-slate-200 border-slate-700 hover:bg-slate-700'
-                }`}
-              >
-                <Code2 className="w-3.5 h-3.5" />
-                <span>Code Vét Cạn (oracle_bf.cpp)</span>
-              </button>
-            )}
+            <button
+              onClick={() =>
+                setShowAuditCodeModal(showAuditCodeModal === 'generator_py' ? 'none' : 'generator_py')
+              }
+              className={`inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold rounded-lg border transition-colors ${
+                showAuditCodeModal === 'generator_py'
+                  ? 'bg-indigo-600 text-white border-indigo-500'
+                  : 'bg-slate-800 text-slate-200 border-slate-700 hover:bg-slate-700'
+              }`}
+            >
+              <Code2 className="w-3.5 h-3.5" />
+              <span>Code Tạo Test (generator.py)</span>
+            </button>
+
+            <button
+              onClick={() =>
+                setShowAuditCodeModal(showAuditCodeModal === 'validator_py' ? 'none' : 'validator_py')
+              }
+              className={`inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold rounded-lg border transition-colors ${
+                showAuditCodeModal === 'validator_py'
+                  ? 'bg-sky-600 text-white border-sky-500'
+                  : 'bg-slate-800 text-slate-200 border-slate-700 hover:bg-slate-700'
+              }`}
+            >
+              <Code2 className="w-3.5 h-3.5" />
+              <span>Code Kiểm Định (validator.py)</span>
+            </button>
+
+            <button
+              onClick={() =>
+                setShowAuditCodeModal(showAuditCodeModal === 'oracle' ? 'none' : 'oracle')
+              }
+              className={`inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold rounded-lg border transition-colors ${
+                showAuditCodeModal === 'oracle'
+                  ? 'bg-amber-600 text-white border-amber-500'
+                  : 'bg-slate-800 text-slate-200 border-slate-700 hover:bg-slate-700'
+              }`}
+            >
+              <Code2 className="w-3.5 h-3.5" />
+              <span>Code Vét Cạn (oracle_bf.cpp)</span>
+            </button>
+
             {onAuditThreeLevel && (
               <button
                 onClick={onAuditThreeLevel}
@@ -305,7 +318,7 @@ export const TestCasesView: React.FC<TestCasesViewProps> = ({
                 className="inline-flex items-center gap-1.5 px-3.5 py-1.5 text-xs font-bold text-white bg-indigo-600 hover:bg-indigo-500 rounded-lg shadow-xs disabled:opacity-50"
               >
                 <ShieldCheck className={`w-3.5 h-3.5 ${isAuditingThreeLevel ? 'animate-spin' : ''}`} />
-                <span>{isAuditingThreeLevel ? 'Đang chạy g++...' : 'Chạy Lại Thẩm Định 3 Cấp'}</span>
+                <span>{isAuditingThreeLevel ? 'Đang chạy thẩm định...' : 'Chạy Thẩm Định Độc Lập'}</span>
               </button>
             )}
           </div>
@@ -317,15 +330,15 @@ export const TestCasesView: React.FC<TestCasesViewProps> = ({
           <div className="bg-slate-800/80 border border-slate-700/80 rounded-xl p-3.5 space-y-2">
             <div className="flex items-center justify-between">
               <span className="text-xs font-bold text-indigo-300 uppercase tracking-wider">
-                Cấp độ 1 • Code Sinh Test
+                Cấp độ 1 • Code Python Tạo Test
               </span>
               <span className="text-[11px] font-bold px-2 py-0.5 rounded bg-indigo-500/20 text-indigo-300 border border-indigo-500/30">
-                {audit?.level1Generator.generatedByCppCode ? 'generator.cpp ✓' : 'Ma trận 20/30/30/20'}
+                generator.py ✓ (0% nhẩm)
               </span>
             </div>
             <p className="text-xs text-slate-300 leading-relaxed">
               {audit?.level1Generator.summary ||
-                'Phân bổ chuẩn 20 test: 20% Test Biên/Min (Corner), 30% Test Bẫy (Killer/Anti-Greedy), 30% Test Ngẫu nhiên (Random), 20% Test Kịch trần (Max/Anti-TLE).'}
+                'Thực thi trực tiếp generator.py (Python 3) sinh đủ 20 file .INP chuẩn ma trận: 20% Biên/Min (Corner), 30% Bẫy (Killer/Anti-Greedy), 30% Ngẫu nhiên (Random), 20% Kịch trần (Max/Anti-TLE).'}
             </p>
             <div className="flex items-center gap-1.5 flex-wrap pt-1 text-[10px] font-mono">
               <span className="bg-sky-500/20 text-sky-300 px-1.5 py-0.5 rounded">
@@ -347,22 +360,22 @@ export const TestCasesView: React.FC<TestCasesViewProps> = ({
           <div className="bg-slate-800/80 border border-slate-700/80 rounded-xl p-3.5 space-y-2">
             <div className="flex items-center justify-between">
               <span className="text-xs font-bold text-amber-300 uppercase tracking-wider">
-                Cấp độ 2 • Đối Chiếu 2 Mô Hình
+                Cấp độ 2 • Thẩm Định Độc Lập 2 Mô Hình
               </span>
               <span className="text-[11px] font-bold px-2 py-0.5 rounded bg-amber-500/20 text-amber-300 border border-amber-500/30">
                 {audit?.level2OracleStress.oracleCompiled
                   ? `Khớp ${audit.level2OracleStress.stressTestsMatched}/${audit.level2OracleStress.stressTestsRun}`
-                  : 'Zero-Trust Oracle'}
+                  : 'Oracle vs Optimal AC'}
               </span>
             </div>
             <p className="text-xs text-slate-300 leading-relaxed">
               {audit?.level2OracleStress.summary ||
-                'Đối chiếu chéo độc lập giữa Mô hình 1 (Brute-Force Naive Oracle) và Mô hình 2 (Optimal AC Solution) trên Subtask 1 và bộ Stress-Test ngẫu nhiên.'}
+                'Đối chiếu chéo độc lập giữa Mô hình 1 (Brute-Force Naive Oracle) và Mô hình 2 (Optimal AC Solution) trên Subtask 1 và bộ Stress-Test sinh từ generator.py.'}
             </p>
             <div className="text-[10px] font-mono text-emerald-300 pt-1">
               {audit?.level2OracleStress.selfHealed
                 ? '✓ Đã tự động phát hiện phản ví dụ & sửa lỗi đạt chuẩn 100%'
-                : '✓ Kiểm chứng 100% không sai lệch logic ở điều kiện biên'}
+                : '✓ Kiểm chứng độc lập 100% không sai lệch logic ở điều kiện biên'}
             </div>
           </div>
 
@@ -370,7 +383,7 @@ export const TestCasesView: React.FC<TestCasesViewProps> = ({
           <div className="bg-slate-800/80 border border-slate-700/80 rounded-xl p-3.5 space-y-2">
             <div className="flex items-center justify-between">
               <span className="text-xs font-bold text-emerald-300 uppercase tracking-wider">
-                Cấp độ 3 • Hiệu Năng &amp; Biên
+                Cấp độ 3 • Kiểm Định Biên &amp; Hiệu Năng
               </span>
               <span className="text-[11px] font-bold px-2 py-0.5 rounded bg-emerald-500/20 text-emerald-300 border border-emerald-500/30">
                 {audit?.level3PerformanceAndSubtasks.maxExecutionTimeMs !== undefined
@@ -380,34 +393,66 @@ export const TestCasesView: React.FC<TestCasesViewProps> = ({
             </div>
             <p className="text-xs text-slate-300 leading-relaxed">
               {audit?.level3PerformanceAndSubtasks.summary ||
-                'Toàn bộ 20 file .OUT được xuất trực tiếp từ binary C++17 biên dịch với cờ -O3, kiểm tra an toàn thời gian < 0.5s và chống tràn số long long.'}
+                'Kiểm định 100% file .INP bằng validator.py và xuất 20 file .OUT trực tiếp từ binary C++17 (-O3), đảm bảo thời gian < 0.5s và chống tràn số long long.'}
             </p>
             <div className="text-[10px] font-mono text-teal-300 pt-1">
-              ✓ Chuẩn xuống dòng LF (\n) • Không khoảng trắng thừa cuối dòng
+              ✓ validator.py • Chuẩn xuống dòng LF (\n) • Không thừa khoảng trắng
             </div>
           </div>
         </div>
 
-        {/* Expandable Generator / Oracle C++ Code Viewer */}
+        {/* Expandable Generator.py / Validator.py / Oracle C++ Code Viewer */}
         {showAuditCodeModal !== 'none' && (
           <div className="bg-slate-950 rounded-xl border border-slate-800 p-4 space-y-2">
-            <div className="flex items-center justify-between">
+            <div className="flex items-center justify-between gap-2 flex-wrap">
               <span className="text-xs font-mono font-bold text-indigo-300">
-                {showAuditCodeModal === 'generator'
-                  ? 'generator.cpp — Chương trình C++17 sinh tự động 20 bộ test (.INP) theo Subtask'
+                {showAuditCodeModal === 'generator_py'
+                  ? 'generator.py — Chương trình Python 3 sinh tự động 20 bộ test (.INP) theo Subtask (0% nhẩm tay)'
+                  : showAuditCodeModal === 'validator_py'
+                  ? 'validator.py — Chương trình Python 3 kiểm định độc lập cấu trúc & biên Subtask của 20 test'
                   : 'oracle_bf.cpp — Chương trình C++17 Brute-Force Naive Oracle đối chiếu độc lập'}
               </span>
-              <button
-                onClick={() => setShowAuditCodeModal('none')}
-                className="text-xs text-slate-400 hover:text-white font-semibold"
-              >
-                Đóng ✕
-              </button>
+              <div className="flex items-center gap-2">
+                <button
+                  onClick={async () => {
+                    const codeToCopy =
+                      showAuditCodeModal === 'generator_py'
+                        ? problem.generatorPy || ''
+                        : showAuditCodeModal === 'validator_py'
+                        ? problem.validatorPy || ''
+                        : problem.oracleBfCpp || problem.solutionCpp || '';
+                    await navigator.clipboard.writeText(codeToCopy);
+                    setCopiedAuditCode(true);
+                    setTimeout(() => setCopiedAuditCode(false), 1500);
+                  }}
+                  className="inline-flex items-center gap-1 px-2.5 py-1 text-xs font-semibold bg-slate-800 hover:bg-slate-700 text-slate-200 rounded-md border border-slate-700"
+                >
+                  {copiedAuditCode ? (
+                    <>
+                      <Check className="w-3.5 h-3.5 text-emerald-400" />
+                      <span className="text-emerald-400">Đã sao chép</span>
+                    </>
+                  ) : (
+                    <>
+                      <Copy className="w-3.5 h-3.5" />
+                      <span>Sao chép code</span>
+                    </>
+                  )}
+                </button>
+                <button
+                  onClick={() => setShowAuditCodeModal('none')}
+                  className="text-xs text-slate-400 hover:text-white font-semibold px-2 py-1"
+                >
+                  Đóng ✕
+                </button>
+              </div>
             </div>
-            <pre className="text-xs font-mono text-slate-200 overflow-x-auto max-h-[300px] p-3 bg-slate-900 rounded-lg border border-slate-800 leading-relaxed">
-              {showAuditCodeModal === 'generator'
-                ? problem.generatorCpp || '// Chưa có generator.cpp'
-                : problem.oracleBfCpp || '// Chưa có oracle_bf.cpp'}
+            <pre className="text-xs font-mono text-slate-200 overflow-x-auto max-h-[320px] p-3 bg-slate-900 rounded-lg border border-slate-800 leading-relaxed">
+              {showAuditCodeModal === 'generator_py'
+                ? problem.generatorPy || '# Chưa có generator.py'
+                : showAuditCodeModal === 'validator_py'
+                ? problem.validatorPy || '# Chưa có validator.py'
+                : problem.oracleBfCpp || problem.solutionCpp || '// Chưa có oracle_bf.cpp'}
             </pre>
           </div>
         )}

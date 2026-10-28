@@ -5,7 +5,11 @@ import { GoogleGenAI, Type } from "@google/genai";
 import dotenv from "dotenv";
 import { jsonrepair } from "jsonrepair";
 import { PREBUILT_PROBLEMS } from "./src/data/prebuiltProblems";
-import { enrichAndEnforceSubtaskCompliance, validateProblemTestCases } from "./src/utils/testValidator";
+import {
+  enrichAndEnforceSubtaskCompliance,
+  validateProblemTestCases,
+  sanitizeProblemData,
+} from "./src/utils/testValidator";
 import {
   executeCppSolution,
   compileCppCode,
@@ -13,6 +17,7 @@ import {
   normalizeOutputText,
   runThreeLevelIndependentAudit,
   classifyTestCategory,
+  hasGppCompiler,
 } from "./src/server/cppRunner";
 
 dotenv.config();
@@ -167,7 +172,7 @@ async function executeGeminiJsonWithRetry<T = any>(
           msg.includes("Unterminated string") ||
           msg.includes("JSON");
 
-        console.warn(`[Gemini] Model "${model}" trial ${attempt} failed: ${msg}`);
+        console.log(`[Gemini] Model "${model}" trial ${attempt} note: ${msg.slice(0, 180)}`);
 
         if (attempt < maxRetriesPerModel && isTransient) {
           // Short backoff before retry on same model
@@ -175,7 +180,7 @@ async function executeGeminiJsonWithRetry<T = any>(
           continue;
         }
         // If all trials on this model failed or error is non-recoverable on this model, switch to next model
-        console.warn(`[Gemini] Switching to alternate candidate model...`);
+        console.log(`[Gemini] Switching to alternate candidate model...`);
         break;
       }
     }
@@ -698,8 +703,14 @@ app.post(["/api/audit-3-level-cpp", "/audit-3-level-cpp"], async (req, res) => {
 
     // Nếu bài toán chưa có generatorCpp hoặc oracleBfCpp (ví dụ bài từ thư viện có sẵn hoặc bài cũ),
     // yêu cầu AI xây dựng độc lập generator.cpp và oracle_bf.cpp trước khi chạy thẩm định 3 cấp độ trên g++
-    if (!workingProblem.generatorCpp || !workingProblem.oracleBfCpp) {
-      const synthPrompt = `Bạn là Chuyên gia Thẩm định Độc lập Đề thi HSG Tin học (Zero-Trust Auditor).
+    const hasDefaultWrapper =
+      !workingProblem.generatorCpp ||
+      !workingProblem.oracleBfCpp ||
+      String(workingProblem.generatorCpp).includes("static const vector<string> TESTS");
+
+    if (hasDefaultWrapper && process.env.GEMINI_API_KEY) {
+      try {
+        const synthPrompt = `Bạn là Chuyên gia Thẩm định Độc lập Đề thi HSG Tin học (Zero-Trust Auditor).
 Cho bài toán C++ sau:
 - Tên bài: ${workingProblem.problemName} (${workingProblem.problemCode})
 - Mô tả: ${workingProblem.description}
@@ -727,24 +738,27 @@ NHIỆM VỤ BẮT BUỘC (TUYỆT ĐỐI KHÔNG NHẨM TEST BẰNG TAY):
    - \`t > 100\`: Sinh 1 test ngẫu nhiên nhỏ thuộc Subtask 1 với \`mt19937_64 rng(t * 1337)\` để phục vụ Stress-Test.
 3. Kiểm tra lại \`solutionCpp\`: nếu có nguy cơ tràn số nguyên (thiếu \`long long\`, \`1LL\`) hoặc chậm, hãy tối ưu hóa luôn.`;
 
-      const synthSchema = {
-        responseMimeType: "application/json",
-        responseSchema: {
-          type: Type.OBJECT,
-          properties: {
-            oracleBfCpp: { type: Type.STRING },
-            generatorCpp: { type: Type.STRING },
-            solutionCpp: { type: Type.STRING },
+        const synthSchema = {
+          responseMimeType: "application/json",
+          responseSchema: {
+            type: Type.OBJECT,
+            properties: {
+              oracleBfCpp: { type: Type.STRING },
+              generatorCpp: { type: Type.STRING },
+              solutionCpp: { type: Type.STRING },
+            },
+            required: ["oracleBfCpp", "generatorCpp", "solutionCpp"],
           },
-          required: ["oracleBfCpp", "generatorCpp", "solutionCpp"],
-        },
-      };
+        };
 
-      const { data: synthData } = await executeGeminiJsonWithRetry(synthPrompt, synthSchema);
-      if (synthData) {
-        if (synthData.oracleBfCpp) workingProblem.oracleBfCpp = synthData.oracleBfCpp;
-        if (synthData.generatorCpp) workingProblem.generatorCpp = synthData.generatorCpp;
-        if (synthData.solutionCpp) workingProblem.solutionCpp = synthData.solutionCpp;
+        const { data: synthData } = await executeGeminiJsonWithRetry(synthPrompt, synthSchema);
+        if (synthData) {
+          if (synthData.oracleBfCpp) workingProblem.oracleBfCpp = synthData.oracleBfCpp;
+          if (synthData.generatorCpp) workingProblem.generatorCpp = synthData.generatorCpp;
+          if (synthData.solutionCpp) workingProblem.solutionCpp = synthData.solutionCpp;
+        }
+      } catch (synthErr: any) {
+        console.log("[3-Level Audit] Using existing/default generator & oracle models:", synthErr?.message);
       }
     }
 

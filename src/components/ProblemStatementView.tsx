@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { InlineMath } from 'react-katex';
+import katex from 'katex';
 import {
   FileText,
   Clock,
@@ -25,6 +25,19 @@ import { downloadBlob } from '../utils/zipGenerator';
 import { SectionRefineBox } from './SectionRefineBox';
 import { useAuth } from '../context/AuthContext';
 
+const SafeInlineMath: React.FC<{ math: string }> = ({ math }) => {
+  try {
+    const html = katex.renderToString(String(math || ''), {
+      throwOnError: false,
+      strict: false,
+      displayMode: false,
+    });
+    return <span dangerouslySetInnerHTML={{ __html: html }} />;
+  } catch {
+    return <span>{String(math || '')}</span>;
+  }
+};
+
 interface ProblemStatementViewProps {
   problem: ProblemData;
   onUpdateProblem?: (updatedProblem: ProblemData) => void;
@@ -34,9 +47,16 @@ interface ProblemStatementViewProps {
 /**
  * Renders problem text with LaTeX math badges ($...$) and clean bold styling without raw **
  */
-const renderFormattedText = (rawText: string) => {
+const renderFormattedText = (rawText: unknown) => {
   if (!rawText) return null;
-  const standardized = cleanMarkdownAndStandardizeLatex(rawText);
+  const safeText = Array.isArray(rawText)
+    ? rawText.map((x) => String(x ?? '')).join('\n')
+    : typeof rawText === 'string'
+    ? rawText
+    : String(rawText);
+  if (!safeText.trim()) return null;
+
+  const standardized = cleanMarkdownAndStandardizeLatex(safeText);
   const lines = standardized.split('\n');
 
   return (
@@ -82,7 +102,7 @@ const renderFormattedText = (rawText: string) => {
                 key={`${lineIdx}-m-${match.index}`}
                 className="inline-flex items-center text-blue-900 bg-blue-50/70 border border-blue-200/60 px-1.5 py-0.5 rounded text-[14px] mx-0.5 align-middle"
               >
-                <InlineMath math={mathFormula} renderError={(error) => <span title={error.message}>{mathFormula}</span>} />
+                <SafeInlineMath math={mathFormula} />
               </span>
             );
           } else if (match[5]) {

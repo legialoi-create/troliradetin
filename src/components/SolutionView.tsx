@@ -62,7 +62,8 @@ export const SolutionView: React.FC<SolutionViewProps> = ({
 
   // Generate code with or without active freopen
   const formattedCode = React.useMemo(() => {
-    const raw = isEditingCode ? editableCode : problem.solutionCpp || '';
+    const rawVal = isEditingCode ? editableCode : problem.solutionCpp || '';
+    const raw = typeof rawVal === 'string' ? rawVal : String(rawVal || '');
     if (!useFreopen) return raw;
 
     // Uncomment freopen lines if they are commented
@@ -466,7 +467,7 @@ export const SolutionView: React.FC<SolutionViewProps> = ({
       </div>
 
       {/* Common Student Pitfalls */}
-      {problem.commonMistakes && problem.commonMistakes.length > 0 && (
+      {Array.isArray(problem.commonMistakes) && problem.commonMistakes.length > 0 && (
         <div className="bg-amber-50/70 border border-amber-200 rounded-2xl p-5 shadow-xs">
           <h3 className="text-xs font-bold text-amber-900 uppercase tracking-wider mb-3 flex items-center gap-2">
             <AlertTriangle className="w-4 h-4 text-amber-600" />
@@ -478,7 +479,7 @@ export const SolutionView: React.FC<SolutionViewProps> = ({
                 <span className="w-5 h-5 rounded-full bg-amber-200 text-amber-900 flex items-center justify-center font-bold text-[10px] shrink-0 mt-0.5">
                   {idx + 1}
                 </span>
-                <span>{mistake}</span>
+                <span>{String(mistake ?? '')}</span>
               </li>
             ))}
           </ul>

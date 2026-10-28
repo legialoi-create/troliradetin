@@ -22,7 +22,7 @@ import { GenerateProblemModal } from './components/GenerateProblemModal';
 import { HistoryDrawer } from './components/HistoryDrawer';
 import { SkillModal } from './components/SkillModal';
 import { generateThemisTestZip, downloadBlob } from './utils/zipGenerator';
-import { enrichAndEnforceSubtaskCompliance } from './utils/testValidator';
+import { enrichAndEnforceSubtaskCompliance, sanitizeProblemData } from './utils/testValidator';
 import { safeParseJsonResponse } from './utils/apiHelper';
 import { useAuth } from './context/AuthContext';
 import { LoginModal } from './components/LoginModal';
@@ -32,6 +32,55 @@ const STORAGE_KEY_HISTORY = 'cpp_assistant_problem_history';
 
 type ActiveTab = 'statement' | 'solution' | 'tests' | 'zip';
 
+class ViewErrorBoundary extends React.Component<
+  { children: React.ReactNode; onReset?: () => void },
+  { hasError: boolean; errorMsg: string }
+> {
+  constructor(props: { children: React.ReactNode; onReset?: () => void }) {
+    super(props);
+    this.state = { hasError: false, errorMsg: '' };
+  }
+
+  static getDerivedStateFromError(error: any) {
+    return {
+      hasError: true,
+      errorMsg: error?.message || String(error || 'Lỗi hiển thị giao diện'),
+    };
+  }
+
+  componentDidCatch(error: any, info: any) {
+    console.error('[ViewErrorBoundary] Caught UI render error:', error, info);
+  }
+
+  render() {
+    if (this.state.hasError) {
+      return (
+        <div className="bg-white rounded-2xl border border-amber-300 p-6 shadow-sm my-4 text-center space-y-3">
+          <div className="text-sm font-bold text-amber-900">
+            Đã tự động bảo vệ giao diện khỏi dữ liệu chưa đồng bộ
+          </div>
+          <p className="text-xs text-slate-600 max-w-lg mx-auto">
+            Chi tiết: {this.state.errorMsg}
+          </p>
+          <div className="flex items-center justify-center gap-3 pt-1">
+            <button
+              type="button"
+              onClick={() => {
+                this.setState({ hasError: false, errorMsg: '' });
+                if (this.props.onReset) this.props.onReset();
+              }}
+              className="px-4 py-2 text-xs font-bold text-white bg-blue-600 hover:bg-blue-700 rounded-xl shadow-xs"
+            >
+              Chuẩn Hóa Dữ Liệu & Tiếp Tục
+            </button>
+          </div>
+        </div>
+      );
+    }
+    return this.props.children;
+  }
+}
+
 export default function App() {
   const { requireAuth } = useAuth();
   const [currentProblem, setCurrentProblem] = useState<ProblemData>(() => {
@@ -39,24 +88,27 @@ export default function App() {
     if (saved) {
       try {
         const parsed = JSON.parse(saved);
-        return enrichAndEnforceSubtaskCompliance(parsed);
+        return enrichAndEnforceSubtaskCompliance(sanitizeProblemData(parsed));
       } catch (e) {
         console.error(e);
       }
     }
-    return enrichAndEnforceSubtaskCompliance(SAMPLE_PROBLEM);
+    return enrichAndEnforceSubtaskCompliance(sanitizeProblemData(SAMPLE_PROBLEM));
   });
 
   const [history, setHistory] = useState<ProblemData[]>(() => {
     const saved = localStorage.getItem(STORAGE_KEY_HISTORY);
     if (saved) {
       try {
-        return JSON.parse(saved);
+        const parsed = JSON.parse(saved);
+        if (Array.isArray(parsed) && parsed.length > 0) {
+          return parsed.map((item) => sanitizeProblemData(item));
+        }
       } catch (e) {
         console.error(e);
       }
     }
-    return [SAMPLE_PROBLEM];
+    return [sanitizeProblemData(SAMPLE_PROBLEM)];
   });
 
   const [activeTab, setActiveTab] = useState<ActiveTab>('statement');
@@ -487,47 +539,55 @@ export default function App() {
         )}
 
         {/* Tab Content Views */}
-        <div className="transition-all">
-          {activeTab === 'statement' && (
-            <ProblemStatementView
-              problem={currentProblem}
-              onUpdateProblem={handleUpdateProblem}
-              onNavigateToTests={() => setActiveTab('tests')}
-            />
-          )}
-          {activeTab === 'solution' && (
-            <SolutionView
-              problem={currentProblem}
-              onSyncWithCpp={handleSyncWithCpp}
-              isSyncingWithCpp={isSyncingWithCpp}
-              onAutoRepairCpp={handleAutoRepairCpp}
-              isAutoRepairingCpp={isAutoRepairingCpp}
-              onUpdateSolutionCode={handleUpdateSolutionCode}
-            />
-          )}
-          {activeTab === 'tests' && (
-            <TestCasesView
-              problem={currentProblem}
-              onUpdateTestCases={handleUpdateTestCases}
-              onRegenerateTests={handleRegenerateTests}
-              isRegenerating={isRegeneratingTests}
-              onSyncWithCpp={handleSyncWithCpp}
-              isSyncingWithCpp={isSyncingWithCpp}
-              onAutoRepairCpp={handleAutoRepairCpp}
-              isAutoRepairingCpp={isAutoRepairingCpp}
-              onAuditThreeLevel={handleAuditThreeLevelCpp}
-              isAuditingThreeLevel={isAuditingThreeLevel}
-            />
-          )}
-          {activeTab === 'zip' && (
-            <ZipPackagingView
-              problem={currentProblem}
-              history={history}
-              isDownloading={isDownloading}
-              setIsDownloading={setIsDownloading}
-            />
-          )}
-        </div>
+        <ViewErrorBoundary
+          onReset={() =>
+            setCurrentProblem((prev) =>
+              enrichAndEnforceSubtaskCompliance(sanitizeProblemData(prev))
+            )
+          }
+        >
+          <div className="transition-all">
+            {activeTab === 'statement' && (
+              <ProblemStatementView
+                problem={currentProblem}
+                onUpdateProblem={handleUpdateProblem}
+                onNavigateToTests={() => setActiveTab('tests')}
+              />
+            )}
+            {activeTab === 'solution' && (
+              <SolutionView
+                problem={currentProblem}
+                onSyncWithCpp={handleSyncWithCpp}
+                isSyncingWithCpp={isSyncingWithCpp}
+                onAutoRepairCpp={handleAutoRepairCpp}
+                isAutoRepairingCpp={isAutoRepairingCpp}
+                onUpdateSolutionCode={handleUpdateSolutionCode}
+              />
+            )}
+            {activeTab === 'tests' && (
+              <TestCasesView
+                problem={currentProblem}
+                onUpdateTestCases={handleUpdateTestCases}
+                onRegenerateTests={handleRegenerateTests}
+                isRegenerating={isRegeneratingTests}
+                onSyncWithCpp={handleSyncWithCpp}
+                isSyncingWithCpp={isSyncingWithCpp}
+                onAutoRepairCpp={handleAutoRepairCpp}
+                isAutoRepairingCpp={isAutoRepairingCpp}
+                onAuditThreeLevel={handleAuditThreeLevelCpp}
+                isAuditingThreeLevel={isAuditingThreeLevel}
+              />
+            )}
+            {activeTab === 'zip' && (
+              <ZipPackagingView
+                problem={currentProblem}
+                history={history}
+                isDownloading={isDownloading}
+                setIsDownloading={setIsDownloading}
+              />
+            )}
+          </div>
+        </ViewErrorBoundary>
       </main>
 
       {/* Footer */}
@@ -560,8 +620,9 @@ export default function App() {
         history={history}
         currentProblemId={currentProblem.id}
         onSelectProblem={(prob) => {
-          setCurrentProblem(prob);
-          setSelectedTopic(prob.topic);
+          const clean = enrichAndEnforceSubtaskCompliance(sanitizeProblemData(prob));
+          setCurrentProblem(clean);
+          setSelectedTopic(clean.topic);
         }}
         onDeleteProblem={(id) => {
           setHistory((prev) => prev.filter((p) => p.id !== id));

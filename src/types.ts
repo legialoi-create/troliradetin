@@ -52,6 +52,7 @@ export interface ThreeLevelAuditReport {
   level1Generator: {
     passed: boolean;
     compiled: boolean;
+    generatedByPyCode?: boolean;
     generatedByCppCode: boolean;
     cornerCount: number;
     killerCount: number;
@@ -148,7 +149,10 @@ export interface ProblemData {
   sampleExplanation: string;
   solutionCpp: string;
   oracleBfCpp?: string;
+  oracleBfPy?: string;
+  generatorPy?: string;
   generatorCpp?: string;
+  validatorPy?: string;
   algorithmExplanation: string;
   timeComplexity: string;
   spaceComplexity: string;
